@@ -585,29 +585,37 @@ TS.adxsar %>% lapply(ns=c(dy=7,wk=35,mc=140,qu=420),FUN=function(l,ns){
   smas <- sapply(ns,close=l[,c("close")],FUN=function(ni,close){
     TTR::SMA(close,n=ni)
   })
-  colnames(smas) <- paste("SMA",names(ns),sep=".")
+  colnames(smas) <- paste("SMA",ns,sep=".")
   cbind(l,smas)
 })
 ```
 
-### Add Rate of Change (ROC)
+### Add Rate of Change (ROC) and Momentum
 <ul>
   <li><a href="http://stockcharts.com/school/doku.php?id=chart_school:technical_indicators:rate_of_change_roc_and_momentum" target="_blank">ChartSchools: ROC</a></li>
   <li><a href="https://www.investopedia.com/articles/technical/092401.asp" target="_blank">Investopedia: ROC 101</a></li>
 </ul>
 
 
-```{r 'Add ROC'}
+```{r 'Add ROC and Momentum'}
 TS.adxsar %>% lapply(wind = c(7,35,140),FUN=function(l,wind){
   roc <- sapply(wind,l=l,function(wi,l){
     TTR::ROC(l[,c("close")],n = wi)
   })
+  mom <- sapply(wind,l=l,function(wi,l){
+    TTR::momentum(l[,c("close")],n = wi)
+  })
   colnames(roc) <- paste("roc",wind,sep=".")
-  cbind(l,roc)
+  colnames(mom) <- paste("mom",wind,sep=".")
+  cbind(l,roc,mom)
 })
 ```
 
-
+### Add Average True Range
+<ul>
+  <li><a href="http://stockcharts.com/school/doku.php?id=chart_school:technical_indicators:average_true_range_atr" target="_blank">StockCharts: ATR</a></li>
+  <li><a href="https://www.investopedia.com/articles/trading/08/average-true-range.asp" target="_blank">Investopedia: Using ATR</a></li>
+</ul>
 
 
 
