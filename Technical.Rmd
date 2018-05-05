@@ -1,0 +1,854 @@
+---
+title: "Indicator Neural Net"
+author: "Stephen Synchronicity"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+always_allow_html: yes
+header-includes:
+   - \usepackage{dcolumn}
+output: 
+  html_document: 
+    self_contained: yes
+    css: C:\Users\Stephen\Documents\R\win-library\3.4\neuhwk\rmarkdown\templates\report\resources\bootstrap.min.css
+    highlight: zenburn
+    keep_md: no
+    theme: spacelab
+    toc: yes
+    toc_float: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE,warning=FALSE,cache=TRUE, fig.align='center', fig.height=3.5, fig.width=5, tidy=TRUE, tidy.opts=list(width.cutoff=80))
+rmarkdown::html_dependency_jquery()
+rmarkdown::html_dependency_bootstrap("spacelab")
+rmarkdown::html_dependency_jqueryui()
+set.seed(1)
+options(scipen=12)
+req.packages <- c("tidyverse","dplyr","htmltools","magrittr","QuantTools","quantmod")
+Vectorize(function(pkg)suppressPackageStartupMessages(library(pkg,character.only = T)))(pkg=req.packages)
+source("~/R/Scripts/DataExploration.R")
+```
+```{r 'Inflection Tracker'}
+# ----------------------- Sat Mar 24 08:17:41 2018 ------------------------#
+# Inputs: Timeseries data, Lag for LM
+# Outputs: Coefficient - Derivative
+# Use ADX http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:average_directional_index_adx
+# Use Parabolic SAR http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:parabolic_sar
+# Use RSI http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:relative_strength_index_rsi
+# Create Neural net signal tracker
+# Load Positions
+POS <- read.csv("~/R/Quant/im_positions.csv")
+POS %<>% .[-c(1:2),]
+# Pull Data
+TS.adxsar <- POS$Symbol %>% as.character %>% sapply(FUN=function(sym){QuantTools::get_finam_data(sym,from=lubridate::mdy("01-01-2015"), to=lubridate::now(), period = "hour")},simplify = F)
+# TS.adxsar %<>% lapply(FUN=function(l){
+#   l <- l[,c(1:6)]
+# }) # Remove ADX
+# Add ADX
+TS.adxsar %<>%  lapply(FUN=function(l){
+  cbind(l,TTR::ADX(l[,c("high","low","close")],n=20)) %>% rename(ADXv=ADX)
+})
+
+```
+# Signals per Indicator
+```{r 'ADX Signal Traditional'}
+siADX <- function(adx,ni,pip,threshold=20,wind=3,verbose=F) {
+  vout <- sapply(seq_along(adx),adx=adx,ni=ni,pip=pip,threshold=threshold,wind=wind,FUN=function(i,adx,ni,pip,threshold){
+    e <- ifelse(length(adx) < {i + wind},length(adx),{i+wind})
+    ind <- seq(i,e,by=1)
+    if(is.na(adx[i]) | is.na(ni[i]) | is.na(pip[i])){return("none")}# Check for NA
+    
+    if(pip[i] > ni[i] & adx[i] > threshold & max(pip[ind]) > threshold){
+      out <- "buy"
+    }else if(pip[i] < ni[i] & adx[i] > threshold & max(ni[ind]) > threshold){
+      out <- "sell"
+    }else {out <- "hold"}
+     if(verbose==T)print(c(i,adx[i],ni[i],pip[i],threshold,out))
+    return(out)
+  })
+  return(vout)
+}
+# For Debugging
+adx <- TS.adxsar[["GOOG"]]$ADXv
+ni <- TS.adxsar[["GOOG"]]$DIn
+pip <- TS.adxsar[["GOOG"]]$DIp
+threshold <- 20
+```
+```{r 'Apply ADX Traditional'}
+TS.adxsar %<>% lapply(FUN=function(l){
+  l %<>% mutate(adx.i=siADX(adx=ADXv,pip=DIp,ni=DIn,verbose=F))
+  })
+```
+```{r 'Add SAR'}
+TS.adxsar %<>% lapply(FUN=function(l){
+  if(any(names(l) %in% "sar")){l %<>% select(- sar)}
+  cbind(l,sar=TTR::SAR(l[,c("high","low")],accel = c(0.05, 0.2)))
+})
+```
+```{r 'SAR Indicator'}
+sar.i <- function(sar,hi,lo){
+  vout <- sapply(seq_along(sar),sar=sar,hi=hi,lo=lo,FUN=function(i,sar,hi,lo){
+    y <- ifelse(i - 1 < 1,i,i-1)
+    prevsar <- as.numeric(sar[y])
+    nowsar <- as.numeric(sar[i])
+    if(lo[i] > nowsar){ind <- "buy"}else if(hi[i] < nowsar){ind <- "sell"}else {ind <- 'none'}
+    return(ind)})
+  return(vout)
+  }
+    
+    
+    
+ 
+```
+
+```{r 'SAR Indicator'}
+TS.adxsar  %<>% lapply(FUN=function(l){
+  if(any(names(l) %in% "sar.i")){l %<>% select(- sar.i)}
+  l %>% mutate(sar.i=sar.i(sar=sar,hi=high,lo=low))
+})
+```
+```{r 'Combine SAR & ADX as Indicator'}
+ADXSAR.i <- function(adx.ind=adx.i,sar.ind=sar.i,wind=3) { # Both indicators and a window
+  vout <- sapply(seq_along(adx.ind),adx.ind=adx.ind,sar.ind=sar.ind,wind=wind,FUN=function(i,adx.ind,sar.ind,wind){ind <- seq(i,i+wind,by=1)
+    if(adx.ind[i] == "buy" & any(sar.ind[ind] %in% "buy")){out <- "buy"}else if(sar.ind[i]=="sell"){out <- "sell"}
+  return(out)
+  })
+  return(vout)
+}
+# For Debugging
+adx.i <- TS.adxsar[["GOOG"]]$adx.i
+sar.i <- TS.adxsar[["GOOG"]]$sar.i
+```
+```{r 'Apply ADXSAR Indicator'}
+TS.adxsar  %<>% lapply(FUN=function(l){
+  if(any(names(l) %in% "ADXSAR.i")){l %<>% select(- ADXSAR.i)}
+  l %>% mutate(ADXSAR.i=ADXSAR.i(sar.ind=sar.i,adx.ind=adx.i))
+})
+```
+```{r 'Compute Buy and Sell Points'}
+# ----------------------- Tue Apr 24 19:10:12 2018 ------------------------#
+# ADX needs built in stoploss with diff
+
+TS.adxsar %<>% lapply(FUN=function(l){
+
+bs.rle <- l$ADXSAR.i %>% rle
+ind <- cumsum(bs.rle$lengths)+1
+ind[length(ind)] <- ind[length(ind)]-1
+b.ind <- which(bs.rle$values == "sell") # The buy indexes come when the rle value changes, so a buy is indicated by sell
+s.ind <- which(bs.rle$values == "buy") # and vice versa
+l %<>% mutate(Action=NA)
+l$Action[ind[s.ind]] <- rep("sell",length(s.ind))
+l$Action[ind[b.ind]] <- rep("buy",length(b.ind))
+
+# df <- data.frame(action=c(rep("sell",length(s.ind)),rep("buy",length(b.ind))),indices=c(ind[s.ind],ind[b.ind])) 
+# df$time <- .y$time[df$indices]
+# df$close <- .y$close[df$indices]
+# df.Action <- data.frame(Action=ifelse(cps$values=="sell","buy","sell"),Index=ind)
+# df.Action %<>% mutate(Date=TS.GOOG[ind,]$date,Price=TS.GOOG[ind,]$close)
+# {df.Action[df.Action$Action == "buy",]-df.Action[df.Action$Action == "sell",]} %>% .$Price %>% sum(na.rm = T)
+
+return(l)
+})
+```
+```{r 'Compare to Buy and Hold'}
+{TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]} %>% sum(na.rm = T)
+{TS.adxsar.signals$GOOG[which.max(TS.adxsar.signals$GOOG$time),"close"] - TS.adxsar.signals$GOOG[which.min(TS.adxsar.signals$GOOG$time),"close"]}
+purrr::map2(.x = TS.adxsar, T)
+# ----------------------- Tue Apr 24 23:10:50 2018 ------------------------#
+# Close - still no better than buy and hold. Needs a trailing stop mechanism. Assign % stop loss to window mean(close[i:i-6]-low[i:i-6])/close
+```
+# The closing price column is required. 
+<h3>Arguments</h3>
+  <table class="R argblock">
+    <tbody>
+      <tr>
+        <td>
+          <code>cl</code>
+          <td>
+            <p>The column with the closing price. Defaults to 'close' <em>Required</em></p>
+          </td>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>buy</code>
+          <td>
+            <p>The column that indicates when a buy occurs. <em>Required</em></p>
+          </td>
+        </td>
+      </tr>
+      <tr>
+      <tr>
+        <td>
+          <code>dcol</code>
+          <td>
+            <p>Column with lagged differences. <em>Required</em></p>
+          </td>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>amt <em>Numeric</em></code>
+          <td>
+            <p>An amount at which the trailing stop will be set</p>
+          </td>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>wind <em>Numeric</em></code>
+          <td>
+            <p> A window of previous periods for which the average difference between close and lo will be calculated, converted to % of bid, and set as the trailing stop.</p>
+          </td>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>std <em>Logical</em></code>
+          <td>
+            <p> Instead of computing the average of the high to low range for the window as the percent trailing stop, calculate the standard deviation of price over a given window, divide by current bid, and use that as the percent.</p>
+          </td>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>prcnt (.dd) format<em>Numeric</em></code>
+          <td>
+            <p>A fixed decimal percent of the bid price for which the stoploss will be calculated.</p>
+          </td>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <code>lo</code>
+          <td>
+            <p>The column with the period low price. Defaults to 'low'</p>
+          </td>
+        </td>
+      </tr>
+    </tbody>
+  </table>  
+```{r 'Add Diff column'}
+
+trailStop <- function(cl,buy,dcol,amt=NULL,wind=NULL,std=NULL,prcnt=NULL,hi=NULL,lo=NULL,verbose=F) {
+  trail.args <- c(amt=amt,wind=wind,prcnt=prcnt)
+  e <- new.env()
+  if(all(is.null(trail.args))){stop("One type of value must be specified")}
+  if(exists("wind") & not(exists("lo"))){stop("Period low column must be specified")}
+  trail.type <- names(trail.args)[which(!is.null(trail.args))]
+  vout <- sapply(seq_along(buy),simplify=T,buy=buy,trail.type=trail.type,trail.args=trail.args,cl=cl,dcol=dcol,std=std,lo=lo,hi=hi,FUN=function(i,buy,trail.type,trail.args,cl,lo,hi,dcol,std){
+    if(buy[i] == "buy" & trail.type == "wind" & is.null(std) & !is.null(hi)){
+      hi.ind <- hi[c(seq(i,i - trail.args[trail.type]))]
+      lo.ind <- lo[c(seq(i,i - trail.args[trail.type]))]
+      trail <- mean(hi.ind-lo.ind)/cl[i]
+      attr(trail,"type") <- "prcnt" # assign the type of the trailing stop
+      attr(trail,"i") <- i # assign the pt at which the trailing stop was assigned for creating a cumsum of losses
+      assign("trail", trail, envir=e)
+    }else if(buy[i] == "buy" & trail.type == "wind" & is.null(std) & is.null(hi)){
+      cl.ind <- cl[c(seq(i,i - trail.args[trail.type]))]
+      lo.ind <- lo[c(seq(i,i - trail.args[trail.type]))]
+      trail <- mean(cl.ind-lo.ind)/cl[i]
+      attr(trail,"type") <- "prcnt" # assign the type of the trailing stop
+      attr(trail,"i") <- i # assign the pt at which the trailing stop was assigned for creating a cumsum of losses
+      assign("trail", trail, envir=e)
+    }else if(buy[i] == "buy" & trail.type == "wind" & !is.null(std)){
+      cl.ind <- cl[c(seq(i,i - trail.args[trail.type]))]
+      trail <- sd(cl.ind)/cl[i]
+      attr(trail,"type") <- "prcnt" # assign the type of the trailing stop
+      attr(trail,"i") <- i
+      assign("trail", trail, envir=e)
+      }else if(buy[i] == "buy" & trail.type == "prcnt"){
+        trail <- prcnt
+        attr(trail,"type") <- "prcnt"
+        attr(trail,"i") <- i
+        assign("trail", trail, envir=e)
+      }else if(buy[i] == "buy" & trail.type == "amt"){
+          trail <- amt
+          attr(trail,"type") <- "amt"
+          attr(trail,"i") <- i
+          assign("trail", trail, envir=e)
+      }else if(buy[i] == "sell"){
+        rm("trail",envir=e)
+      }
+    out <- "none"
+   if(verbose==T){print(i)}
+    if(exists("trail",envir=e)){
+      trail <- e$trail
+      y <- attr(trail,"i")
+      cumu <- sum(dcol[seq(i,y)])
+    if(verbose==T){print(e$trail)}
+    
+    if(attr(trail,"type") == "prcnt"){ # Checking Statements
+        
+         if(cumu < trail*cl[{i-1}]*-1){
+           out <- "sell"
+           rm("trail",envir=e)}
+      }else if(attr(trail,"type") == "amt"){
+          if(cumu < trail * -1){
+            out <- "sell"
+            rm("trail",envir=e)}
+      }else {
+          out <- "none"
+      }
+    }else {
+          return("none")}
+    return(out)
+    
+    # ----------------------- Thu Apr 26 08:52:37 2018 ------------------------#
+    # Need a check on each increment - will need if statement for prcnt type trails (wind,prcnt) and fixed amt
+    # Completed(2018-04-26 0913)
+  })
+  return(vout)
+}
+#trailStop(cl=TS.adxsar$GOOG$close,buy=TS.adxsar$GOOG$ADXSAR.i,dcol=TS.adxsar$GOOG$Diff,wind=5,lo=TS.adxsar$GOOG$low)
+TS.adxsar %<>% lapply(FUN=function(l){
+  l %<>% mutate(Diff=c(0,diff(close)),Trail=trailStop(cl=close,buy=ADXSAR.i,dcol=Diff,wind=8,std=T))
+})
+googleVis::gvisTable(TS.adxsar$GOOG) %>% plot
+```
+```{r 'Percent Rise'}
+PR <- function(close,wind,verbose=F){
+  vout <- sapply(seq_along(close),wind=wind,close=close,verbose=verbose,FUN=function(i,wind,close,verbose){
+    if(verbose==T){print(i)}
+    if(i-wind < 1){ind <- 1}else {ind <- i-wind}
+   out <- prop.table(table(sign(diff(rev(close[c(seq(i,ind))])))))["1"] # Get the values in the window. Because seq is in reverse, the values need to flipped with rev. Take the diff, get the sign of the difference, table that, then give proportions, assign the proportion associated with positive gains.
+  })
+}
+```
+```{r 'Apply Percent Rise'}
+TS.adxsar %<>% lapply(FUN=function(l){
+  l %<>% mutate(pr=PR(close,35,verbose=F)) 
+})
+# ----------------------- Thu Apr 26 11:36:55 2018 ------------------------#
+# Join the buy points with the loss or gain per period and see if there are patterns
+{TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]} %>% length
+TS.adxsar$GOOG %>% filter(Action=="buy") %>% select(time,PR,sar,ADXv,DX,Diff,sar.i) %>% cbind(G.L={TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]}) %>% lm(G.L ~ ., data=.) %>% summary
+
+```
+<p>Let's step up the complexity a bit with a machine learning algorithm that takes a lag window as inputs and outputs predictions for price movement.</p>
+
+```{r}
+library(caret)
+library(caretEnsemble)
+
+data.tr <- dplyr::select(TS.adxsar$GOOG,close,sar,ADXv,DIn,DIp,DX,sar.i,adx.i,pr) %>% mutate(Diff=c(diff(close),0)) %>% na.omit # make the diff of the next day in line with the current day bc that is what needs to be predicted
+data.tr %<>% renamena()
+data.tr %<>% convert2dummyVars() 
+
+rv <- "Diff" # Name of response variable
+req.packages <- c("caret","doParallel","iterators","parallel","foreach") # [package dependencies]
+  startPkgs <- Vectorize(FUN=function(pkg){suppressPackageStartupMessages(library(pkg,character.only = T))})
+  startPkgs(req.packages)
+cl <- makeCluster(detectCores()-1)
+  registerDoParallel(cl)
+  getDoParWorkers()
+  sysT.mod <- system.time({ #[model name]
+  data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
+  data.train <- caret::trainControl(method="repeatedcv",
+                             index=data.train, 
+                             number=10,
+                             repeats=1, 
+                             search = "grid",
+                             allowParallel = T,
+                             returnData = F,
+                             returnResamp = "all")
+  form <- as.formula(paste0(rv," ~ .")) #[y-var]
+  
+  mod <- caret::train(form = form, # [model name]
+                      data = data.tr,
+                      trControl = data.train,
+                      metric="RMSE",
+                      method = "avNNet",
+                      tuneLength = 10)
+  })
+ 
+  stopCluster(cl);registerDoSEQ()
+```
+
+```{r, 'Predict Diff using Various ML Algorithms', echo=TRUE}
+library(caret)
+library(caretEnsemble)
+data.tr <- renamena(TS.adxsar$GOOG)
+data.tr <- dplyr::select(data.tr,close,sar,ADXv,DIn,DIp,DX,sar.i,adx.i,pr) %>% mutate(Diff=c(diff(close),0)) %>% na.omit # make the diff of the next day in line with the current day bc that is what needs to be predicted
+data.tr[,sapply(data.tr,is.factor)] %<>% lapply(as.numeric)
+rv <- "Diff" # Name of response variable
+req.packages <- c("caret","doParallel","iterators","parallel","foreach") # [package dependencies]
+  startPkgs <- Vectorize(FUN=function(pkg){suppressPackageStartupMessages(library(pkg,character.only = T))})
+  startPkgs(req.packages)
+cl <- makeCluster(detectCores()-1)
+  registerDoParallel(cl)
+  getDoParWorkers()
+  sysT.mod <- system.time({ #[model name]
+  data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
+  data.train <- caret::trainControl(method="repeatedcv",
+                             index=data.train, 
+                             number=10,
+                             repeats=1, 
+                             search = "grid",
+                             allowParallel = T,
+                             returnData = F,
+                             classProbs=T, 
+                             savePredictions = "final",
+                             returnResamp = "final")
+  form <- as.formula(paste0(rv," ~ .")) #[y-var]
+  
+  mod <- caretEnsemble::caretList(form = form, # [model name]
+                                       data = data.tr,
+                                       trControl = data.train,
+                                       metric="RMSE",
+                                       methodList = c("avNNet","gamSpline","kknn"), #[method list]
+                                       tuneList = list("avNNEt"=caretEnsemble::caretModelSpec(
+                                         method="avNNet", tuneLength = 10),"gamSpline"=caretEnsemble::caretModelSpec(
+                                         method="gamSpline", tuneLength = 10),"kknn"=caretEnsemble::caretModelSpec(
+                                         method="kknn", tuneLength = 10)))
+  stopCluster(cl);registerDoSEQ()
+  })
+  
+lapply(mod,purrr::pluck,"results","MAE") %>% lapply(mean)
+# avNNet performes the best
+caret::confusionMatrix(sign(mod[["gamSpline"]][["pred"]]$pred) %>% as.factor,sign(mod[["gamSpline"]][["pred"]]$obs) %>% as.factor)
+mod
+```
+
+```{r 'Try Classification'}
+diff2fac <- function(Diff){
+  if(is.numeric(Diff)){x <- as.factor(sign(Diff))}else{
+Diff %<>% forcats::fct_recode('n'='-1','z'='0','p'='1')}}
+data.tr %<>% mutate(sDiff=diff2fac(sDiff)) 
+rv <- "sDiff"
+cl <- makeCluster(detectCores()-1)
+  registerDoParallel(cl)
+  getDoParWorkers()
+  sysT.mod <- system.time({ #[model name]
+  data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
+  data.train <- caret::trainControl(method="repeatedcv",
+                             index=data.train, 
+                             number=10,
+                             repeats=1, 
+                             search = "grid",
+                             allowParallel = T,
+                             returnData = F,
+                             classProbs=T, 
+                             savePredictions = "final",
+                             returnResamp = "final")
+  form <- as.formula(paste0(rv," ~ .")) #[y-var]
+  
+  mod <- caretEnsemble::caretList(form = form, # [model name]
+                                       data = data.tr,
+                                       trControl = data.train,
+                                       metric="Accuracy",
+                                       methodList = c("avNNet","svmRadial","svmLinear","kknn","C5.0","LogitBoost"), #[method list]
+                                       tuneList = list("avNNEt"=caretEnsemble::caretModelSpec(
+                                         method="avNNet", tuneLength = 10),"svmRadial"=caretEnsemble::caretModelSpec(
+                                         method="svmRadial", tuneLength = 10),"svmLinear"=caretEnsemble::caretModelSpec(
+                                         method="svmLinear", tuneLength = 10),
+    "kknn"=caretEnsemble::caretModelSpec(
+                                         method="kknn", tuneLength = 10),
+    "C5.0"=caretEnsemble::caretModelSpec(
+                                         method="C5.0", tuneLength = 10),
+    "LogitBoost"=caretEnsemble::caretModelSpec(
+                                         method="LogitBoost", tuneLength = 10)
+    ))
+  stopCluster(cl);registerDoSEQ()
+  })
+  lapply(mod,purrr::pluck,"results","Accuracy") %>% lapply(mean)
+  unloadPkgs <- Vectorize(FUN=function(pkg){detach(pkg,character.only = T)})
+  unloadPkgs(req.packages)
+```
+<p>Which stocks to invest in, how much to allocate to these stocks, which stocks are trending and which are oscillating, where to set your trailing stop-loss, e.t.c.</p> <a href="https://www.quora.com/Can-machine-learning-algorithms-models-predict-the-stock-prices-If-yes-which-are-the-best-machine-learning-algorithm-models-to-predict-the-stock-prices">Source</a>
+
+<h3>Performance detection</h3>
+<p>RV is sign of the cumsum of next day hourly</p>
+<ol>
+  <li>Basic LM Time ~ Close - slope indicates trend</li>
+  <li>Add indicators implied in article + all indicators already functionalized</li>
+  <li>Create derived for DIn, DIp subtract(DIp,DIn)</li>
+  <li>Moving averages across 4 durations each: day, week, 28 days, quarter</li>
+</ol>
+<h3>Knn for selection</h3>
+<ol>
+  <li>Vector of symbol names</li>
+  <li>Pull data for each into nested list object</li>
+  <li>Add indicators</li>
+  <li>Normalize all</li>
+  <li>Take 5 most recent rows (head) and rbind</li>
+  <li>Select and remove one symbol and data, and run knn prediction on the rest to find 5 predictions for which is the nearest neighbors. </li>
+  <li>Take the tie break vote for which stock is performing similarly </li>
+</ol>
+<hr>
+<p>First step, create response variables of varying time windows for use in predicting validity of trading signals.</p>
+<table>
+  <tbody>
+    <tr valign="top">
+      <td><code>rv</code></td>
+      <td>as a character vector
+        <p><em>Required</em> The name of the response variable in the dataset for which windowed gains/losses are to be computed <em>as a character vector</em></p>
+      </td>
+    <tr valign="top">
+      <td><code>wind</code></td>
+      <td>
+        <p><em>Required</em> The number of periods in the window for which the gain/loss will be computed, <em>can be a positive integer or a vector of postive integers</em></p>
+      </td>
+    </tr>
+    <tr valign="top">
+      <td><code>dat</code></td>
+      <td>
+        <p><em>Required</em> The dataset as a data frame or tibble on which these windowed gains/losses will be computed</p>
+      </td>
+    </tr>
+  </tbody>
+</table>
+```{r 'Windowed Response Variable Fn'}
+winRV <- function(rv=NULL,wind=7,dat=NULL) {
+  if(!is.vector(wind)|!is.double(wind)){stop("Window must be an integer or a vector of integers")}else {len <- 1:{length(wind)}}
+  if(is.null(rv)|is.null(dat)){stop("All variables are required!")}
+  # ----------------------- Fri May 04 08:54:09 2018 ------------------------#
+  # Primary computation
+  tl <- length(dat[[rv]]) # Length of the data as a window limiter
+  rvmat <- matrix(nrow = tl, ncol = length(wind)*3,data=rep(NA,tl * length(wind)*3))
+  for (i in seq_along(wind)) {
+    wi <- wind[i]
+    for (r in seq_along(dat[[rv]])) {
+      if(r + wi > tl){win <- r:tl}else {win <- r:{r+wi}}# Create Window
+      
+      rvmat[r,{i*3-2}] <- dat[[rv]][max(win)]-dat[[rv]][min(win)]# Find the Difference for the window and add it to the appropriate matrix column
+      
+      rvmat[r,{i*3-1}] <- sign(rvmat[r,{i*3-2}]) # Find the sign of the difference and add it to the appropriate matrix column
+      rvmat[r,{i*3}] <- (max(dat[[rv]][win])-min(dat[[rv]][win])) * ifelse(which.min(dat[[rv]][win]) > which.max(dat[[rv]][win]),-1,1) # Find the max gain/loss possible for that time period and add it to the appropriate matrix column
+      
+    }
+  }
+  colnames(rvmat) <- t(sapply(paste0("y.",c("Diff","Sign","MaxGL")),paste,wind,sep="."))
+    cbind(dat,rvmat)
+           
+       
+      
+  
+}
+winRV(rv="close",wind=c(7,49,196),dat=TS.adxsar$GOOG)
+```
+
+## Add Variables in Article
+Referencing: <a href="https://www.quantinsti.com/blog/predictive-modeling-algorithmic-trading/">R Predictive Algorithm</a>
+### Williams %R
+<p>Column bind the Williams %R to the data where per = vector of period lengths. In this case the data has hour periods, so 7 is roughly a 24 hr period, 35 is roughly a market week, and 140 is roughly a 28 day period.
+```{r 'Add Williams Indicator'}
+# ----------------------- Fri May 04 10:35:38 2018 ------------------------#
+# Add the Williams %R where per = vector of period lengths.
+TS.adxsar %<>% lapply(per = c(7,35,140),FUN=function(l,per){
+  WpR <- sapply(per,function(peri){
+    TTR::WPR(l[,c("high","low","close")],n = peri)
+  })
+  colnames(WpR) <- paste("WpR",per,sep=".")
+  cbind(l,WpR)
+})
+```
+
+### Add Relative Strength Indicator
+```{r 'Add the RSI values'}
+TS.adxsar %<>% lapply(FUN=function(l){
+  cbind(l,RSI7=TTR::RSI(l[,c("close")],n=7),RSI14=TTR::RSI(l[,c("close")],n=14))
+})
+```
+<button class="btn btn-sm btn-success" href="#rsi" role="button" data-toggle="collapse" data-target="#demo">View Custom Indicator for RSI</button>
+<div id="rsi" class="collapse">
+```{r 'Develop RSI Indicator',eval=F}
+# Dependent upon 28 and 100 period simple Moving average
+# ----------------------- Tue Apr 24 11:26:17 2018 ------------------------#
+# Needs refinemnt of factor indicators
+
+siRSI <- function(RSI,SMA28,SMA100,close) {
+  #Oversold, Overbought, Bear, Bull,Support,Resistance
+  if(is.na(SMA28)){return(NA)}else if(is.na(SMA100)){SMA <- SMA28}else {SMA <- SMA100}
+  
+  if(close > SMA){out <- "Up"
+  if(RSI >= 50){out <- paste0(out,"St")}else if(RSI <= 40 & RSI > 30){out <- paste0(out,"We")}else if(RSI <= 30){out <- paste0(out,"OS")}else if(RSI < 50 & RSI > 40){paste0(out,"Su")}
+  }else if(close < SMA){out <- "Do"
+  if(RSI >= 50){out <- paste0(out,"St")}else if(RSI <= 40 & RSI > 30){out <- paste0(out,"We")}else if(RSI >= 70){out <- paste0(out,"OB")}else if(RSI < 50 & RSI > 40){paste0(out,"Re")}
+  }
+  return(out)
+}
+```
+```{r 'Add RSI Indicator',eval=F}
+TS.indicators %<>%  lapply(FUN=function(l){
+  l %<>% rowwise %>%  mutate(RSI.ind=siRSI(RSI=RSI14,SMA28=SMA28,SMA100=SMA100,close=close))
+})
+```
+</div>
+
+### Add Simple Moving Averages
+<p>The function below adds moving averages for 7 hour periods (1 day), 35 hr periods (1 week), 140 hr periods (one moon cycle), and 420 hr periods (a financial quarter). All of these values are obviously rough estimates as they are absolute periods and do not take into account holidays.</p>
+```{r 'Add SMA Iterations'}
+TS.adxsar %>% lapply(ns=c(dy=7,wk=35,mc=140,qu=420),FUN=function(l,ns){
+  smas <- sapply(ns,close=l[,c("close")],FUN=function(ni,close){
+    TTR::SMA(close,n=ni)
+  })
+  colnames(smas) <- paste("SMA",names(ns),sep=".")
+  cbind(l,smas)
+})
+```
+
+
+
+
+
+
+
+```{r 'knn to select similar stocks'}
+# ----------------------- Thu Apr 26 18:30:53 2018 ------------------------#
+# 
+
+```
+
+
+```{r 'Windowed Predictor Function'}
+# ----------------------- Thu Apr 26 18:30:05 2018 ------------------------#
+# Stalled till we find a combination of predictors and algorithms with some degree o accuracy
+
+library(caret)
+library(caretEnsemble)
+
+windowedmL <- function(df,wind=100,rv="Diff",...){ # df is data, wind= window, rv =  response variable name (character), ... = vectors of indicator columns (name as used in mutate)
+  alli <- 101:nrow(df)
+  data.tr <- select(df,...)
+  cl <- makeCluster(detectCores()-1)
+  registerDoParallel(cl)
+  getDoParWorkers()
+  sapply(alli,data.tr=data.tr,rv=rv,function(i,data.tr,rv){
+    ind <- rev(seq(i,i-wind))
+    data.tr <- data.tr[ind,]
+    req.packages <- c("caret","doParallel","iterators","parallel","foreach") # [package dependencies]
+  startPkgs <- Vectorize(FUN=function(pkg){suppressPackageStartupMessages(library(pkg,character.only = T))})
+  startPkgs(req.packages)
+  sysT.mod <- system.time({ #[model name]
+  data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
+  data.train <- caret::trainControl(method="repeatedcv",
+                             index=data.train, 
+                             number=10,
+                             repeats=1, 
+                             search = "grid",
+                             allowParallel = T,
+                             returnData = F,
+                             summaryFunction=caret::twoClassSummary,
+                             classProbs=T, 
+                             savePredictions = "final",
+                             returnResamp = "final")
+  form <- as.formula(paste0("Diff"," ~ .")) #[y-var]
+  
+  mod <- caretEnsemble::caretList(form = form, # [model name]
+                                       data = data.tr,
+                                       trControl = data.train,
+                                       metric="RMSE",
+                                       methodList = c("bstSm","avNNet","gamSpline","kknn"), #[method list]
+                                       tuneList = list("bstSm"=caretEnsemble::caretModelSpec( #[method specs]
+                                         method="bstSm", tuneLength = 10),"avNNEt"=caretEnsemble::caretModelSpec(
+                                         method="avNNet", tuneLength = 10),"gamSpline"=caretEnsemble::caretModelSpec(
+                                         method="gamSpline", tuneLength = 10),"kknn"=caretEnsemble::caretModelSpec(
+                                         method="kknn", tuneLength = 10)))
+  return(list(sysT.mod,mod))
+  })
+
+  })
+  
+  
+
+  stopCluster(cl):registerDoSEQ()
+  unloadPkgs <- Vectorize(FUN=function(pkg){detach(pkg,character.only = T)})
+  unloadPkgs(req.packages)
+  
+}
+```
+
+
+```{r 'Graph SAR Indicator',fig.dim=c(10.5,4)}
+library(tidyquant)
+lapply(seq_along(TS.adxsar),TS=TS.adxsar,FUN=function(i,TS){
+  nm <- names(TS)[i]
+  TS[[i]] %>% filter(time > lubridate::ymd("2017-05-01") & time < lubridate::ymd("2017-05-31")) %>% ggplot(data=.,aes(x = time, y = close)) +
+    geom_candlestick(aes(open = open, high = high, low = low, close = close),size=.3) +
+    geom_point(aes(y=sar,shape=sar.i),size=.7)+
+    geom_vline(data=function(x){x %>% filter(Action == "buy")},aes(xintercept=time),color="blue")+
+  geom_vline(data=function(x){x %>% filter(Action == "sell")},aes(xintercept=time),color="red")+
+    labs(title = "GOOG", 
+         y = "Closing Price", x = "Time")+
+  theme_tq()+
+  scale_shape_manual(values=c(buy=24,sell=25,none=20))
+  #ggplot2::ggsave(filename=paste0(nm,"ts.pdf"),plot=last_plot(), path="C:\\Users\\Stephen\\Documents\\Northeastern\\Git\\ppua5302\\Project 3\\Plots",device = "pdf",width = 10.5/2, height = 4, units = "in")
+})
+TS.adxsar$GOOG%>% filter(time > lubridate::ymd("2017-05-01") & time < lubridate::ymd("2017-05-31")) %>% ggplot(data=.,aes(x = time, y = close)) +
+    geom_candlestick(aes(open = open, high = high, low = low, close = close),size=.3) +
+    geom_point(aes(y=sar,shape=sar.i),size=.7)+
+    geom_vline(data=function(x){x %>% filter(Action == "buy")},aes(xintercept=time),color="blue")+
+  geom_vline(data=function(x){x %>% filter(Action == "sell")},aes(xintercept=time),color="red")+
+    labs(title = "GOOG", 
+         y = "Closing Price", x = "Time")+
+  theme_tq()+
+  scale_shape_manual(values=c(buy=24,sell=25,none=20))
+```
+
+
+```{r 'ADX Signal Stockcharts'}
+# ----------------------- Tue Apr 24 09:07:39 2018 ------------------------#
+# 
+
+ADX <- TS.indicators[["TSLA"]][128,]$ADX;DX <- TS.indicators[["TSLA"]][128,]$DX;SMA <- TS.indicators[["TSLA"]][128,]$SMA28;DIp <- TS.indicators[["TSLA"]][128,]$DIp;DIn <- TS.indicators[["TSLA"]][128,]$DIn;close <- TS.indicators[["TSLA"]][128,]$close
+siADX <- function(ADX,DX,DIp,DIn,close,verbose=F){lgl <- rep(F,3)
+names(lgl) <- c("ADX","DI","Close")
+  if(is.na(DIp)|is.na(SMA)){return(NA)}else if(is.na(ADX)){ADX <- DX}else {ADX}
+  if(verbose==T)print(paste(ADX,DX,SMA,DIp,DIn,close,sep=","))
+  if(DIp >= DIn){
+  lgl[1] <- ADX > 20
+  if(verbose==T)print(lgl)# ADX is above 20
+  lgl[2] <- DIp > DIn
+  if(verbose==T)print(lgl)
+  lgl[3] <- close > SMA
+  if(verbose==T)print(lgl)
+  ind <- which(lgl)
+  if(verbose==T)print(ind)
+  if(any(names(ind) %in% "Close")){ind[["Close"]] <- ind[["Close"]] + .5}
+  out <- sum(ind * .5 )}else{
+    lgl[1] <- T
+    lgl[2] <- DIp < DIn
+  lgl[3] <- close < SMA
+  ind <- which(lgl)
+  if(any(names(ind) %in% "Close")){ind[["Close"]] <- ind[["Close"]] + .5}
+  out <- sum(ind * .5)* -1}
+  return(out)
+}
+siADX(ADX,DX,SMA,DIp,DIn,close,verbose=T)
+siL_ADX <- function(ADX,DX,SMA,DIp,DIn,close,verbose=F){lgl <- rep(F,3)
+  names(lgl) <- c("ADX","DI","Close")
+  if(is.na(DIp)|is.na(SMA)){return(NA)}else if(is.na(ADX)){ADX <- DX}else {ADX}
+  out <- DIp >= DIn & ADX > 20 & DIp > DIn & close > SMA
+  return(out)
+  }
+```
+```{r}
+
+# Add MACD - more efficient
+TS.indicators <- lapply(TS.indicators,FUN=function(l){
+  cbind(l,TTR::MACD(l[,c("close")],nFast=7,nSlow=28,nSig=30))
+})
+TS.indicators <- lapply(TS.indicators,FUN=function(l){
+  cbind(l,TTR::TDI(l[,c("close")],n=7,multiple=4))
+})
+
+TS.indicators <- lapply(TS.indicators,FUN=function(l){
+  cbind(l,RSI7=TTR::RSI(l[,c("close")],n=7),RSI14=TTR::RSI(l[,c("close")],n=14))
+})
+
+
+# ----------------------- Thu Apr 19 06:08:57 2018 ------------------------#
+# Now we have some solid indicators to work with.
+lapply(TS.indicators,FUN=function(l){ggplot(data = l,mapping=aes(x=date))+
+  geom_errorbar(aes(ymin=low,ymax=high),color='blue')+
+    geom_point(aes(y=`1_10.sar`,color=`1_10.ind`),size=.2,shape=24,alpha=.5)+
+    geom_point(aes(y=`2_20.sar`,color=`2_20.ind`),size=.2,shape=8)})
+```
+
+
+
+
+```{r 'Apply ADX Indicator'}
+TS.indicators %<>%  lapply(FUN=function(l){
+  l %<>% rowwise %>% mutate(ADX.ind=siADX(ADX,DX,SMA28,DIp,DIn,close))
+})
+## 4/20/2018 9:32:05 AM
+# Create a buy or sell signal based on each indicator. When the come into agreement, master signal column shows buy/sell signal. 
+# buy signal - agreement on indicators (possibly also price < previous sell price)
+# sell signal - agreement on indicators - weight given to SAR (sensitivity refinement necessary), if sell price * .8 (tax) - fee > 0 then sell and record transactions
+# rebuy signal - need to develop specific indicators attuned to price recovery (as longer term indicators with greater lag might not give agreement to buy signal in these instances.) The MACD, PR20, and SAR might be the best for this measure.
+#Automatically records transaction in 2nd DF with all columns necessary for tax reporting.
+```
+
+```{r 'Develop RSI Indicator'}
+# ----------------------- Tue Apr 24 11:26:17 2018 ------------------------#
+# Needs refinemnt of factor indicators
+
+siRSI <- function(RSI,SMA28,SMA100,close) {
+  #Oversold, Overbought, Bear, Bull,Support,Resistance
+  if(is.na(SMA28)){return(NA)}else if(is.na(SMA100)){SMA <- SMA28}else {SMA <- SMA100}
+  
+  if(close > SMA){out <- "Up"
+  if(RSI >= 50){out <- paste0(out,"St")}else if(RSI <= 40 & RSI > 30){out <- paste0(out,"We")}else if(RSI <= 30){out <- paste0(out,"OS")}else if(RSI < 50 & RSI > 40){paste0(out,"Su")}
+  }else if(close < SMA){out <- "Do"
+  if(RSI >= 50){out <- paste0(out,"St")}else if(RSI <= 40 & RSI > 30){out <- paste0(out,"We")}else if(RSI >= 70){out <- paste0(out,"OB")}else if(RSI < 50 & RSI > 40){paste0(out,"Re")}
+  }
+  return(out)
+}
+```
+
+```{r 'Apply RSI Indicator'}
+TS.indicators %<>%  lapply(FUN=function(l){
+  l %<>% rowwise %>%  mutate(RSI.ind=siRSI(RSI=RSI14,SMA28=SMA28,SMA100=SMA100,close=close))
+})
+
+```
+
+```{r 'TDI Indicator'}
+siTDI <- function(tdi,di){
+  out <- ifelse(sign(tdi) > 0 & sign(di) < 0,T,F)
+}
+```
+```{r 'Apply TDI'}
+TS.indicators %<>%  lapply(FUN=function(l){
+  l %<>% rowwise %>%  mutate(TDI.ind=siTDI(tdi=tdi,di=di))
+})
+```
+
+```{r 'Buy Sell Indicator'}
+# ----------------------- Tue Apr 24 14:11:22 2018 ------------------------#
+# Not effective, buy threshold is likely too high
+
+siBS <- function(sar.ind1,sar.ind2,adx.ind,rsi.ind,macd.ind,tdi.ind,verbose=F) {lgl <- rep(F,5)
+
+  formals(siBS) %<>% lapply(FUN=function(x){if(is.na(x)){x <- F}})
+  
+  
+  lgl[["v.sar"]] <- ifelse(sar.ind1 == "rise",T,F)
+  if(verbose==T)print(lgl)
+  lgl[["v.adx"]] <- ifelse(adx.ind > 2,T,F)
+  if(verbose==T)print(lgl)
+  lgl[["v.rsi"]] <- stringr::str_detect(rsi.ind,"UpSt")
+ if(verbose==T)print(lgl)
+  lgl[["v.macd"]] <- ifelse(macd.ind > 0,T,F)
+  if(verbose==T)print(lgl)
+  lgl[["v.tdi"]] <- tdi.ind
+  if(verbose==T)print(lgl)
+  
+  out <- if(sum(lgl,na.rm=T)/5 > .5){out <- "buy"}else if(sar.ind1 == "fall" & sar.ind2 == "fall"){out <- "sell"}else {out <- "none"}
+   
+  return(out)
+}
+# ----------------------- Tue Ap,r 24 14:11:42 2018 ------------------------#
+# Take 2, just SAR & ADX
+siBS.SAR <- function(sar1,sar2,adx.ind){
+  if(is.na(sar1) | is.na(sar2) | is.na(adx.ind)){return("sell")}
+  if(sar1 == "rise" & sar2 == "rise" & adx.ind > 2){out <- "buy"}else if(sar1 == "fall" & sar2 == "fall"){out <- "sell"}else {out <- "none"}
+  return(out)
+}
+
+
+```
+```{r 'Apply Buy Sell Indicator'}
+TS.indicators %<>%  lapply(FUN=function(l){
+  l %<>% rowwise %>%  mutate(BS.ind=siBS(sar.ind1=`2_20.ind`,sar.ind2=`1_10.ind`,adx.ind=ADX.ind,rsi.ind=RSI.ind,macd.ind=macd,tdi.ind=TDI.ind,verbose=F))
+})
+TS.indicators %<>%  lapply(FUN=function(l){
+  l %<>% rowwise %>%  mutate(BS.ind=siBS.SAR(sar1=`2_20.ind`,sar2=`1_10.ind`,adx.ind=ADX.ind))
+})
+```
+
+```{r 'Backtest BS Indicator for 2017'}
+TS.GOOG <- TS.indicators[["GOOG"]][lubridate::year(TS.indicators[["GOOG"]]$date) == 2017,]
+subtract(TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% max},]$close,TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% min},]$close) # Overall growth durng 2017
+# which(TS.GOOG$BS.ind == "buy")
+# which(TS.GOOG$BS.ind == "buy")[which(diff(which(TS.GOOG$BS.ind == "buy")) > 1)] 
+# which(TS.GOOG$BS.ind == "sell")
+# which(TS.GOOG$BS.ind == "sell")[which(diff(which(TS.GOOG$BS.ind == "sell")) > 1)]
+cps <- rle(TS.GOOG$BS.ind)
+ind <- cumsum(cps$lengths)+1
+df.Action <- data.frame(Action=ifelse(cps$values=="sell","buy","sell"),Index=ind)
+df.Action %<>% mutate(Date=TS.GOOG[ind,]$date,Price=TS.GOOG[ind,]$close)
+{df.Action[df.Action$Action == "buy",]-df.Action[df.Action$Action == "sell",]} %>% .$Price %>% sum(na.rm = T)
+```
+
+
