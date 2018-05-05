@@ -314,8 +314,8 @@ PR <- function(close,wind,verbose=F){
 }
 ```
 ```{r 'Apply Percent Rise'}
-TS.adxsar %<>% lapply(FUN=function(l){
-  l %<>% mutate(pr=PR(close,35,verbose=F)) 
+TS.adxsar %>% lapply(FUN=function(l){
+  l %<>% mutate(PRise=PR(close,35,verbose=F)) 
 })
 # ----------------------- Thu Apr 26 11:36:55 2018 ------------------------#
 # Join the buy points with the loss or gain per period and see if there are patterns
@@ -523,7 +523,7 @@ winRV <- function(rv=NULL,wind=7,dat=NULL) {
       
   
 }
-winRV(rv="close",wind=c(7,49,196),dat=TS.adxsar$GOOG)
+winRV(rv="close",wind=c(7,35,140),dat=TS.adxsar$GOOG)
 ```
 
 ## Add Variables in Article
@@ -533,19 +533,23 @@ Referencing: <a href="https://www.quantinsti.com/blog/predictive-modeling-algori
 ```{r 'Add Williams Indicator'}
 # ----------------------- Fri May 04 10:35:38 2018 ------------------------#
 # Add the Williams %R where per = vector of period lengths.
-TS.adxsar %<>% lapply(per = c(7,35,140),FUN=function(l,per){
-  WpR <- sapply(per,function(peri){
-    TTR::WPR(l[,c("high","low","close")],n = peri)
+TS.adxsar %<>% lapply(wind = c(7,35,140),FUN=function(l,wind){
+  WpR <- sapply(wind,function(wi){
+    TTR::WPR(l[,c("high","low","close")],n = wi)
   })
-  colnames(WpR) <- paste("WpR",per,sep=".")
+  colnames(WpR) <- paste("WpR",wind,sep=".")
   cbind(l,WpR)
 })
 ```
 
 ### Add Relative Strength Indicator
 ```{r 'Add the RSI values'}
-TS.adxsar %<>% lapply(FUN=function(l){
-  cbind(l,RSI7=TTR::RSI(l[,c("close")],n=7),RSI14=TTR::RSI(l[,c("close")],n=14))
+TS.adxsar %>% lapply(wind = c(7,35,140),FUN=function(l,wind){
+  rsic <- sapply(wind,l=l,function(wi,l){
+    TTR::RSI(l[,c("close")],n = wi)
+  })
+  colnames(rsic) <- paste("rsi",wind,sep=".")
+  cbind(l,rsic)
 })
 ```
 <button class="btn btn-sm btn-success" href="#rsi" role="button" data-toggle="collapse" data-target="#demo">View Custom Indicator for RSI</button>
@@ -586,7 +590,22 @@ TS.adxsar %>% lapply(ns=c(dy=7,wk=35,mc=140,qu=420),FUN=function(l,ns){
 })
 ```
 
+### Add Rate of Change (ROC)
+<ul>
+  <li><a href="http://stockcharts.com/school/doku.php?id=chart_school:technical_indicators:rate_of_change_roc_and_momentum" target="_blank">ChartSchools: ROC</a></li>
+  <li><a href="https://www.investopedia.com/articles/technical/092401.asp" target="_blank">Investopedia: ROC 101</a></li>
+</ul>
 
+
+```{r 'Add ROC'}
+TS.adxsar %>% lapply(wind = c(7,35,140),FUN=function(l,wind){
+  roc <- sapply(wind,l=l,function(wi,l){
+    TTR::ROC(l[,c("close")],n = wi)
+  })
+  colnames(roc) <- paste("roc",wind,sep=".")
+  cbind(l,roc)
+})
+```
 
 
 
