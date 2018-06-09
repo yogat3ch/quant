@@ -1,5 +1,5 @@
 ---
-title: "Indicator Neural Net"
+title: "Stock Tools"
 author: "Stephen Synchronicity"
 date: '`r format(Sys.time(), "%Y-%m-%d")`'
 always_allow_html: yes
@@ -39,6 +39,8 @@ POS <- read.csv("~/R/Quant/im_positions.csv")
 POS %<>% .[-c(1:2),]
 # Pull Data
 TS.adxsar <- POS$Symbol %>% as.character %>% sapply(FUN=function(sym){QuantTools::get_finam_data(sym,from=lubridate::mdy("01-01-2015"), to=lubridate::now(), period = "hour")},simplify = F)
+TS.adxsar$AMD <- tidyquant::tq_get("AMD",get = "stock.prices")
+TS.adxsar$TSM <- tidyquant::tq_get("TSM",get = "stock.prices")
 # TS.adxsar %<>% lapply(FUN=function(l){
 #   l <- l[,c(1:6)]
 # }) # Remove ADX
@@ -47,6 +49,16 @@ TS.adxsar %<>%  lapply(FUN=function(l){
   cbind(l,TTR::ADX(l[,c("high","low","close")],n=20)) %>% rename(ADXv=ADX)
 })
 
+```
+```{r 'YTD 2018 Linear Regression Models'}
+lms <- lapply(TS.adxsar, function(l){
+  if(str_detect(names(l),"time") == T){
+  l <- l %>% mutate("date" = lubridate::as_date(time)) %>% group_by(date) %>%  summarize_all(.funs = mean)
+  }
+  ytd  <- l %>% filter(date > lubridate::ymd("2018-01-01"))
+  glm(close ~ date, data = ytd, family = "gaussian")
+})
+lapply(lms,summary)
 ```
 # Signals per Indicator
 ```{r 'ADX Signal Traditional'}
@@ -616,15 +628,28 @@ TS.adxsar %>% lapply(wind = c(7,35,140),FUN=function(l,wind){
   <li><a href="http://stockcharts.com/school/doku.php?id=chart_school:technical_indicators:average_true_range_atr" target="_blank">StockCharts: ATR</a></li>
   <li><a href="https://www.investopedia.com/articles/trading/08/average-true-range.asp" target="_blank">Investopedia: Using ATR</a></li>
 </ul>
+```{r 'Add ATR'}
+# ----------------------- Sat May 05 10:15:47 2018 ------------------------#
+# Average True Range could be useful for setting stop-loss
+TS.adxsar %>% lapply(ns=c(dy=7,wk=35,mc=140,qu=420),FUN=function(l,ns){
+  atrs <- lapply(ns,l=l,FUN=function(ni,l){
+    TTR::ATR(quantmod::HLC(l),n=ni) %>% as.data.frame
+  })
+  cbind(l,do.call("cbind",atrs))
+})
+```
 
 
 
+# KNN Selector
 ```{r 'knn to select similar stocks'}
 # ----------------------- Thu Apr 26 18:30:53 2018 ------------------------#
 # 
 
 ```
-
+```{r 'Add ATR as Pct for Comparison'}
+##
+```
 
 ```{r 'Windowed Predictor Function'}
 # ----------------------- Thu Apr 26 18:30:05 2018 ------------------------#
