@@ -26,7 +26,7 @@ req.packages <- c("tidyverse","dplyr","htmltools","magrittr","QuantTools","quant
 Vectorize(function(pkg)suppressPackageStartupMessages(library(pkg,character.only = T)))(pkg=req.packages)
 source("~/R/Scripts/DataExploration.R")
 ```
-```{r 'Inflection Tracker'}
+```{r 'Load Data'}
 # ----------------------- Sat Mar 24 08:17:41 2018 ------------------------#
 # Inputs: Timeseries data, Lag for LM
 # Outputs: Coefficient - Derivative
@@ -35,12 +35,76 @@ source("~/R/Scripts/DataExploration.R")
 # Use RSI http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:relative_strength_index_rsi
 # Create Neural net signal tracker
 # Load Positions
-POS <- read.csv("~/R/Quant/im_positions.csv")
-POS %<>% .[-c(1:2),]
+# POS <- read.csv("~/R/Quant/im_positions.csv")
+# POS %<>% .[-c(1:2),]
+googlesheets::gs_auth()
+gsPOS <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
+POS <- googlesheets::gs_read(gsPOS,ws=1)
+```
+Monitoring ticker data can be accomplished through the IEX API. The following R Script has built in API calls for R
+```{r 'Source IEX API R File'}
+# download.file("https://raw.githubusercontent.com/imanuelcostigan/iex/master/R/iex.R",destfile="iex.R")
+source("iex.R")
+```
+<a href="https://iextrading.com/developer/docs/#chart" target="_blank">IEX Documentation: Charts</a>
+```{r 'IEX Chart Fields'}
+iex_fields <- tibble::tribble(
+  ~field, ~type, ~desc,
+               "high",  "number",                                                                                                 "is available on all charts.",
+               "low", "number",                                                                                                "is available on all charts.",
+            "volume", "number",                                                                                                "is available on all charts.",
+             "label", "number",  "is available on all charts. A variable formatted version of the date depending on the range. Optional convienience field.",
+    "changeOverTime", "number", "is available on all charts. Percent change of each interval relative to first value. Useful for comparing multiple stocks.",
+              "date", "string",                                                                                                "is available on all charts.",
+              "open", "number",                                                                                                "is available on all charts.",
+             "close", "number",                                                                                                "is available on all charts.",
+  "unadjustedVolume", "number",                                                                                              "is not available on 1d chart.",
+            "change", "number",                                                                                              "is not available on 1d chart.",
+     "changePercent", "number",                                                                                              "is not available on 1d chart.",
+              "vwap", "number",                                                                                              "is not available on 1d chart."
+  )
+
+```
+
+```{r 'Basic IEX API Chart Call'}
+iex_base <- function(version) {
+  "https://api.iextrading.com/"
+}
+
+iex_endpoint <- function(version = "1.0",params = c("stock","market","batch")) {
+  httr::modify_url(iex_base(), path = paste(version,paste(params,collapse = "/"), sep = "/"))
+}
+iex_batch <- function(symbols, range, filter = NULL) {
+  q <- paste("symbols=",paste(symbols,collapse=","),paste("&types=chart",sep=""),paste("&range=",range,sep=""),sep="")
+  if(!is.null(filter)){
+    q <- paste(q,paste("&filter=",paste(filter,collapse=","),sep=""),sep = "")
+  }
+  
+  (url <- httr::modify_url(iex_endpoint(), query = paste(q,sep="/")))
+}
+iex_batch_req <- function(symbols, range, filter = NULL){
+resp <- httr::GET(iex_batch(symbols, range, filter = filter))
+if (httr::http_type(resp) != "application/json") {
+    stop("API did not return JSON", call. = FALSE)
+  }
+  parsed <- jsonlite::fromJSON(httr::content(resp, "text"),simplifyDataFrame = T,flatten = T)
+  nms <- names(parsed)
+  parsed %<>% purrr::flatten()
+  names(parsed) <- nms
+  return(parsed)
+  on.exit(Sys.sleep(0.2))
+}
+
+positions <- iex_batch_req(symbols = POS[-c(1,2),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
+
+```
+
+```{r 'Pull'}
 # Pull Data
 TS.adxsar <- POS$Symbol %>% as.character %>% sapply(FUN=function(sym){QuantTools::get_finam_data(sym,from=lubridate::mdy("01-01-2015"), to=lubridate::now(), period = "hour")},simplify = F)
 TS.adxsar$AMD <- tidyquant::tq_get("AMD",get = "stock.prices")
 TS.adxsar$TSM <- tidyquant::tq_get("TSM",get = "stock.prices")
+TS.adxsar$MSFT <- tidyquant::tq_get("MSFT",get = "stock.prices")
 # TS.adxsar %<>% lapply(FUN=function(l){
 #   l <- l[,c(1:6)]
 # }) # Remove ADX
@@ -53,12 +117,12 @@ TS.adxsar %<>%  lapply(FUN=function(l){
 ```{r 'YTD 2018 Linear Regression Models'}
 lms <- lapply(TS.adxsar, function(l){
   if(str_detect(names(l),"time") == T){
-  l <- l %>% mutate("date" = lubridate::as_date(time)) %>% group_by(date) %>%  summarize_all(.funs = mean)
+  l <- l %>% mutate("date" = lubridate::as_date(time)) %>% group_by(date) %>%  summarize_all(.funs = mean) %>% mutate_if(.predicate = is.numeric, .funs = scale)
   }
   ytd  <- l %>% filter(date > lubridate::ymd("2018-01-01"))
   glm(close ~ date, data = ytd, family = "gaussian")
 })
-lapply(lms,summary)
+lapply(lms,summary) %>% lapply(purrr::pluck("coefficients"))
 ```
 # Signals per Indicator
 ```{r 'ADX Signal Traditional'}
