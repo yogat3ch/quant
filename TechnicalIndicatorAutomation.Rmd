@@ -1,0 +1,44 @@
+---
+title: "Indicator Neural Net"
+author: "Stephen Synchronicity"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+always_allow_html: yes
+header-includes:
+   - \usepackage{dcolumn}
+output: 
+  html_document: 
+    self_contained: yes
+    css: C:\Users\Stephen\Documents\R\win-library\3.4\neuhwk\rmarkdown\templates\report\resources\bootstrap.min.css
+    highlight: zenburn
+    keep_md: no
+    theme: spacelab
+    toc: yes
+    toc_float: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE,warning=FALSE,cache=TRUE, fig.align='center', fig.height=3.5, fig.width=5, tidy=TRUE, tidy.opts=list(width.cutoff=80))
+rmarkdown::html_dependency_jquery()
+rmarkdown::html_dependency_bootstrap("spacelab")
+rmarkdown::html_dependency_jqueryui()
+set.seed(1)
+options(scipen=12)
+req.packages <- c("tidyverse","dplyr","htmltools","magrittr","quantmod")
+for (q in seq_along(req.packages)) {
+  suppressPackageStartupMessages(library(req.packages[q],character.only = T))
+}
+```
+```{r 'Inflection Tracker'}
+# ----------------------- Sat Mar 24 08:17:41 2018 ------------------------#
+# Inputs: Timeseries data, Lag for LM
+# Outputs: Coefficient - Derivative
+# Use ADX http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:average_directional_index_adx
+# Use Parabolic SAR http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:parabolic_sar
+# Use RSI http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:relative_strength_index_rsi
+# Create Neural net signal tracker
+quantmod::getSymbols(Symbols="AMZN",src='yahoo')
+findPeaks(AMZN[time(AMZN) > "2017-01-01","AMZN.Close"])
+Delt(AMZN[time(AMZN) > "2017-01-01","AMZN.Close"])
+chartSeries(AMZN, subset="2017::2018") 
+buildModel(,training.per = c("2017-01-01","2018-01-01"))
+```
+
