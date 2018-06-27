@@ -40,6 +40,10 @@ source("~/R/Scripts/DataExploration.R")
 googlesheets::gs_auth()
 gsPOS <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 POS <- googlesheets::gs_read(gsPOS,ws=1)
+# ----------------------- Tue Jun 26 13:52:59 2018 ------------------------#
+# Import Dad's portfolio
+Dad_positions2018.06.26 <- read.csv("~/R/Quant/Dad_positions2018-06-26.csv", stringsAsFactors=FALSE)
+
 ```
 Monitoring ticker data can be accomplished through the IEX API. The following R Script has built in API calls for R
 ```{r 'Source IEX API R File'}
@@ -71,16 +75,42 @@ iex_base <- function(version) {
   "https://api.iextrading.com/"
 }
 
-iex_endpoint <- function(version = "1.0",params = c("stock","market","batch")) {
+iex_endpoint <- function(version = "1.0",params = c("stock")) {
   httr::modify_url(iex_base(), path = paste(version,paste(params,collapse = "/"), sep = "/"))
 }
+iex_stock <- function(symbols, type = "quote", filter = NULL){
+  req <- sapply(symbols, function(s){
+  url  <- paste(iex_endpoint(), s, type,sep = "/")
+  })
+  req <- sapply(req,FUN=function(r){
+    httr::modify_url(r,query = paste("filter=",paste(filter,collapse=","),sep=""))
+  })
+  return(req)
+}
+iex_stock_req <- function(symbols, filter = NULL){
+  reqs <- iex_stock(symbols, filter = filter)
+  
+  nms <- names(reqs)
+  resps <- sapply(reqs,FUN=function(req){
+    print(req)
+    resp <- httr::GET(req)
+if (httr::http_type(resp) != "application/json") {
+    stop(paste("API did not return JSON. Error:", httr::content(resp)), call. = FALSE)
+  }
+  parsed <- jsonlite::fromJSON(httr::content(resp, "text"),simplifyVector = T,flatten = T)
+  Sys.sleep(0.2)
+  return(parsed)})
+  names(resps) <- nms
+  return(resps)
+}
+
 iex_batch <- function(symbols, range, filter = NULL) {
   q <- paste("symbols=",paste(symbols,collapse=","),paste("&types=chart",sep=""),paste("&range=",range,sep=""),sep="")
   if(!is.null(filter)){
     q <- paste(q,paste("&filter=",paste(filter,collapse=","),sep=""),sep = "")
   }
   
-  (url <- httr::modify_url(iex_endpoint(), query = paste(q,sep="/")))
+  (url <- httr::modify_url(iex_endpoint(params = c("stock","market","batch")), query = paste(q,sep="/")))
 }
 iex_batch_req <- function(symbols, range, filter = NULL){
 resp <- httr::GET(iex_batch(symbols, range, filter = filter))
@@ -96,15 +126,91 @@ if (httr::http_type(resp) != "application/json") {
 }
 
 positions <- iex_batch_req(symbols = POS[-c(1,2),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
-
+dad_positions <- iex_batch_req(symbols = Dad_positions2018.06.26[-c(1),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
+```
+## Financials
+```{r 'Financial Quote'}
+quotes <- iex_stock_req(symbols = POS[-c(1,2),1,drop=T][!is.na(POS[-c(1,2),1])], filter = c("marketCap","peRatio","week52High","week52Low","ytdChange"))
 ```
 
-```{r 'Pull'}
-# Pull Data
+```{r 'Add Sign indicator_Change Date'}
+# ----------------------- Tue Jun 26 14:54:21 2018 ------------------------#
+# Add sign indiicator for color change in candlestick graph 
+
+pos <- lapply(positions,FUN=function(l){l %<>% mutate(chg = sign(changePercent))
+  l$chg %<>% as.factor
+  l})
+dad_pos <- lapply(dad_positions,FUN=function(l){l %<>% mutate(chg = sign(changePercent))
+  l$chg %<>% as.factor
+  l})
+# ----------------------- Tue Jun 26 14:27:25 2018 ------------------------#
+# Change date to a date
+pos <- lapply(pos,FUN=function(l){l$date %<>% as.character %>% as.POSIXct(x = ., tz = "", format = c("%Y-%m-%d"))
+  return(l)})
+dad_pos <- lapply(dad_pos,FUN=function(l){l$date %<>% as.character %>% as.POSIXct(x = ., tz = "", format = c("%Y-%m-%d"))
+  return(l)})
+
+
+```
+```{r 'Convert to TimeSeries xts'}
+tpos <- lapply(pos,FUN=function(l){xts(l[,not(names(l) %in% "date")], order.by = l$date)})
+dad_tpos <- lapply(dad_pos,FUN=function(l){xts(l[,not(names(l) %in% "date")], order.by = l$date)})
+```
+
+## Candlestick Graphs
+### SEP IRA 
+```{r 'Charts for SEP IRA'}
+# ----------------------- Tue Jun 26 14:15:19 2018 ------------------------#
+# Try with ggplot2 & plotly
+dad_pos_ggp <- lapply(seq_along(dad_pos),pos = dad_pos,FUN=function(l,pos){
+  pos[[l]] %>% 
+  ggplot(data= ., aes(x=date, colour = chg)) +
+  theme_bw() +
+  geom_linerange(aes(ymin=low, ymax=high)) +
+  geom_segment(aes(y = open, yend = open, xend = date - {as.numeric(periodicity(date)[1])} / 2 )) +
+  geom_segment(aes(y = close, yend = close, xend = date + {as.numeric(periodicity(date)[1])} / 2)) +
+  geom_smooth(method = "lm",aes(y = close))+
+  #geom_text(aes(x = lmeq_x, y = lmeq_y, label = lm_eqn(l)), parse = TRUE) +
+  scale_colour_manual(values = c("-1" = "darkred", "1" = "darkgreen", "0" = "gray")) + theme(legend.position='none') + 
+    labs(title = names(pos)[l],
+    subtitle = "1 Year Historical",
+    caption = "",
+    x = "Date",y = "Closing Price") +
+    theme(plot.title = element_text(hjust = .5),plot.subtitle = element_text(hjust = .5))
+    
+})
+
+lapply(dad_pos_ggp,FUN=function(ggp){plotly::ggplotly(ggp, dynamicTicks = T, tooltip = c("y","high","low"))}
+)
+```
+
+### Individual
+```{r 'Charts for Individual Portfolio'}
+pos_ggp <- lapply(seq_along(pos),pos = pos,FUN=function(l,pos){
+  pos[[l]] %>% 
+  ggplot(data= ., aes(x=date, colour = chg)) +
+  theme_bw() +
+  geom_linerange(aes(ymin=low, ymax=high)) +
+  geom_segment(aes(y = open, yend = open, xend = date - {as.numeric(periodicity(date)[1])} / 2 )) +
+  geom_segment(aes(y = close, yend = close, xend = date + {as.numeric(periodicity(date)[1])} / 2)) +
+  geom_smooth(method = "lm",aes(y = close))+
+  #geom_text(aes(x = lmeq_x, y = lmeq_y, label = lm_eqn(l)), parse = TRUE) +
+  scale_colour_manual(values = c("-1" = "darkred", "1" = "darkgreen", "0" = "gray")) + theme(legend.position='none') + 
+    labs(title = names(pos)[l],
+    subtitle = "1 Year Historical",
+    caption = "",
+    x = "Date",y = "Closing Price") +
+    theme(plot.title = element_text(hjust = .5),plot.subtitle = element_text(hjust = .5))
+    
+})
+
+lapply(pos_ggp,FUN=function(ggp){plotly::ggplotly(ggp, dynamicTicks = T, tooltip = c("y","high","low"))}
+)
+```
+
+```{r 'Finam Hourly Data'}
+# Pull Data 
 TS.adxsar <- POS$Symbol %>% as.character %>% sapply(FUN=function(sym){QuantTools::get_finam_data(sym,from=lubridate::mdy("01-01-2015"), to=lubridate::now(), period = "hour")},simplify = F)
-TS.adxsar$AMD <- tidyquant::tq_get("AMD",get = "stock.prices")
-TS.adxsar$TSM <- tidyquant::tq_get("TSM",get = "stock.prices")
-TS.adxsar$MSFT <- tidyquant::tq_get("MSFT",get = "stock.prices")
 # TS.adxsar %<>% lapply(FUN=function(l){
 #   l <- l[,c(1:6)]
 # }) # Remove ADX
