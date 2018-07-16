@@ -43,8 +43,20 @@ POS <- googlesheets::gs_read(gsPOS,ws=1)
 # ----------------------- Tue Jun 26 13:52:59 2018 ------------------------#
 # Import Dad's portfolio
 Dad_positions2018.06.26 <- read.csv("~/R/Quant/Dad_positions2018-06-26.csv", stringsAsFactors=FALSE)
-
 ```
+```{r 'Calculating Returns'}
+CostBasis18 <- read.csv("~/R/Quant/PortfolioCostBasis2018-07-09.csv")
+# ----------------------- Mon Jul 09 19:09:54 2018 ------------------------#
+# Clean Data
+sapply(CostBasis18, class)
+CostBasis18[, c("Date.Sold","Date.Acquired")] %<>% lapply(FUN=lubridate::dmy)
+CostBasis18 %<>% rename(`Gain.Loss.Pct` = `Gain.Loss..`)
+CostBasis18[, c("Proceeds","Cost.per.Share","Cost","Gain.Loss","Gain.Loss.Pct")] %<>% lapply(.,FUN=function(x)gsub("\\$|\\,|\\%","",x)) %>% lapply(as.numeric)
+# ----------------------- Mon Jul 09 20:01:34 2018 ------------------------#
+# Portfolio Returns YTD 2018
+CostBasis18 %>% group_by(Symbol) %>% summarise_at(.vars = c("Quantity","Cost","Proceeds","Cost.per.Share","Gain.Loss","Gain.Loss.Pct"), .funs = sum) %<>% mutate(Wgt = {Cost/sum(CostBasis18$Cost)}) %>% mutate(W.Yld = Wgt * Gain.Loss.Pct)
+```
+
 Monitoring ticker data can be accomplished through the IEX API. The following R Script has built in API calls for R
 ```{r 'Source IEX API R File'}
 # download.file("https://raw.githubusercontent.com/imanuelcostigan/iex/master/R/iex.R",destfile="iex.R")
@@ -70,7 +82,7 @@ iex_fields <- tibble::tribble(
 
 ```
 
-```{r 'Basic IEX API Chart Call'}
+```{r 'Basic IEX API Call'}
 iex_base <- function(version) {
   "https://api.iextrading.com/"
 }
@@ -78,42 +90,105 @@ iex_base <- function(version) {
 iex_endpoint <- function(version = "1.0",params = c("stock")) {
   httr::modify_url(iex_base(), path = paste(version,paste(params,collapse = "/"), sep = "/"))
 }
-iex_stock <- function(symbols, type = "quote", filter = NULL){
-  req <- sapply(symbols, function(s){
+```
+```{r 'IEX Quote Call'}
+iex_stock <- function(tSymbols, type = "quote", query_filter = NULL){
+  req <- sapply(tSymbols, function(s){
   url  <- paste(iex_endpoint(), s, type,sep = "/")
   })
   req <- sapply(req,FUN=function(r){
-    httr::modify_url(r,query = paste("filter=",paste(filter,collapse=","),sep=""))
+    httr::modify_url(r,query = paste("filter=",paste(query_filter,collapse=","),sep=""))
   })
   return(req)
 }
-iex_stock_req <- function(symbols, filter = NULL){
-  reqs <- iex_stock(symbols, filter = filter)
-  
-  nms <- names(reqs)
+
+iex_stock_req <- function(tSymbols, type = "quote", query_filter = NULL){
+  reqs <- iex_stock(tSymbols, type = type, query_filter = query_filter)
   resps <- sapply(reqs,FUN=function(req){
-    print(req)
     resp <- httr::GET(req)
 if (httr::http_type(resp) != "application/json") {
-    stop(paste("API did not return JSON. Error:", httr::content(resp)), call. = FALSE)
+   paste("API did not return JSON. Error:", httr::content(resp))
+  parsed <- NA
   }
-  parsed <- jsonlite::fromJSON(httr::content(resp, "text"),simplifyVector = T,flatten = T)
+  parsed <- tryCatch({parsed <- jsonlite::fromJSON(httr::content(resp, "text"),simplifyVector = T) %>% unlist}, 
+  warning = function(w) {print(paste("The var:",req," generated the following warning: ",w,sep=""))},
+  error = function(e) {print(paste("The var:",req," generated the following error: ",e,sep=""))
+  out <- NA
+  return(out)},
+  finally = {})
+  
+  
   Sys.sleep(0.2)
   return(parsed)})
-  names(resps) <- nms
+
   return(resps)
 }
+```
+## Financials
+```{r 'Responses per Query Type for Filtering Purposes'}
+# ----------------------- Fri Jun 29 18:52:46 2018 ------------------------#
+# The IEX API has similarily formatted API calls of the following types:
+# stats, quote, earnings, financials
+# Each of the types has specific response variables that can be filtered - these are found in the table below.
 
-iex_batch <- function(symbols, range, filter = NULL) {
-  q <- paste("symbols=",paste(symbols,collapse=","),paste("&types=chart",sep=""),paste("&range=",range,sep=""),sep="")
+library("rvest")
+iex_responses <- list()
+iex_responses$stats <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[18]"))
+iex_responses$quote <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[27]"))
+iex_responses$earnings <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[11]"))
+iex_responses$financials <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[13]"))
+```
+
+```{r 'Financial Stats'}
+quotes <- iex_stock_req(tSymbols = POS[,1,drop=T],type = "quote", query_filter = c("marketCap","peRatio","week52High","week52Low","ytdChange"))
+stats <- iex_stock_req(tSymbols = POS[,1,drop=T],type = "stats", query_filter = c("peRatioHigh","peRatioLow","week52change	","returnOnEquity","consensusEPS","ttmEPS","profitMargin","year5ChangePercent","year1ChangePercent","ytdChangePercent","month6ChangePercent","month3ChangePercent","month1ChangePercent","cash","debt"))
+fin_stats <- sapply(names(quotes),function(n){c(quotes[[n]],stats[[n]])},simplify=FALSE)
+```
+
+```{r 'Add Risk Metrics'}
+pos_scaled <- lapply(pos,FUN = function(l){l$close %<>% scale %>% as.numeric
+  l})
+key_stats <- lapply(seq_along(pos), pos=pos_scaled,timeframe = NULL, FUN = function(l,pos,timeframe){
+if(!is.null(timeframe)){
+  mod <- lm(close ~ seq_along(date), data = pos[[l]] %>% filter(date > lubridate::floor_date(lubridate::today(), unit = timeframe)))
+}else {
+  mod <- lm(close ~ seq_along(date), data=pos[[l]])
+}
+out <- vector("numeric",length = 4)
+out[1] <- mod[["coefficients"]][["seq_along(date)"]]
+out[2] <- caret::RMSE(mod[["fitted.values"]],mod[["model"]][["close"]])
+
+mod_sum <- summary(mod)
+out[3] <- mod_sum %>% {.[["adj.r.squared"]]}
+out[4] <- sum(sign(mod_sum[["residuals"]]) < 0)/length(mod_sum[["residuals"]])
+names(out) <- c("coef","rmse","adj.r","pctNeg")
+return(out)
+})
+names(key_stats) <- names(pos)
+
+key_stats %<>% do.call("rbind",.) 
+key_stats$symbol <- symbol
+key_stats %<>% reshape2::melt()
+names(key_stats) <- c("stat","timeframe","value","symbol")
+key_stats %>% gather(key = "stat", value = "value")
+```
+
+```{r 'Display Financial Stats'}
+fin_statsTEST <- do.call(rbind,fin_stats) %>% as.data.frame
+DT::datatable()
+```
+
+```{r 'Batch Symbol Timeseries Data Request'}
+iex_batch <- function(tSymbols, range, filter = NULL) {
+  q <- paste("symbols=",paste(tSymbols,collapse=","),paste("&types=chart",sep=""),paste("&range=",range,sep=""),sep="")
   if(!is.null(filter)){
     q <- paste(q,paste("&filter=",paste(filter,collapse=","),sep=""),sep = "")
   }
   
   (url <- httr::modify_url(iex_endpoint(params = c("stock","market","batch")), query = paste(q,sep="/")))
 }
-iex_batch_req <- function(symbols, range, filter = NULL){
-resp <- httr::GET(iex_batch(symbols, range, filter = filter))
+iex_batch_req <- function(tSymbols, range, filter = NULL){
+resp <- httr::GET(iex_batch(tSymbols, range, filter = filter))
 if (httr::http_type(resp) != "application/json") {
     stop("API did not return JSON", call. = FALSE)
   }
@@ -125,12 +200,8 @@ if (httr::http_type(resp) != "application/json") {
   on.exit(Sys.sleep(0.2))
 }
 
-positions <- iex_batch_req(symbols = POS[-c(1,2),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
-dad_positions <- iex_batch_req(symbols = Dad_positions2018.06.26[-c(1),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
-```
-## Financials
-```{r 'Financial Quote'}
-quotes <- iex_stock_req(symbols = POS[-c(1,2),1,drop=T][!is.na(POS[-c(1,2),1])], filter = c("marketCap","peRatio","week52High","week52Low","ytdChange"))
+positions <- iex_batch_req(tSymbols = POS[-c(1,2),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
+dad_positions <- iex_batch_req(tSymbols = Dad_positions2018.06.26[-c(1),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
 ```
 
 ```{r 'Add Sign indicator_Change Date'}
@@ -149,8 +220,6 @@ pos <- lapply(pos,FUN=function(l){l$date %<>% as.character %>% as.POSIXct(x = .,
   return(l)})
 dad_pos <- lapply(dad_pos,FUN=function(l){l$date %<>% as.character %>% as.POSIXct(x = ., tz = "", format = c("%Y-%m-%d"))
   return(l)})
-
-
 ```
 ```{r 'Convert to TimeSeries xts'}
 tpos <- lapply(pos,FUN=function(l){xts(l[,not(names(l) %in% "date")], order.by = l$date)})
@@ -1061,7 +1130,7 @@ TS.indicators %<>%  lapply(FUN=function(l){
 
 ```{r 'Backtest BS Indicator for 2017'}
 TS.GOOG <- TS.indicators[["GOOG"]][lubridate::year(TS.indicators[["GOOG"]]$date) == 2017,]
-subtract(TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% max},]$close,TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% min},]$close) # Overall growth durng 2017
+subtract(TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% max},]$close,TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% min},]$close) # Overall growth during 2017
 # which(TS.GOOG$BS.ind == "buy")
 # which(TS.GOOG$BS.ind == "buy")[which(diff(which(TS.GOOG$BS.ind == "buy")) > 1)] 
 # which(TS.GOOG$BS.ind == "sell")
@@ -1072,5 +1141,6 @@ df.Action <- data.frame(Action=ifelse(cps$values=="sell","buy","sell"),Index=ind
 df.Action %<>% mutate(Date=TS.GOOG[ind,]$date,Price=TS.GOOG[ind,]$close)
 {df.Action[df.Action$Action == "buy",]-df.Action[df.Action$Action == "sell",]} %>% .$Price %>% sum(na.rm = T)
 ```
-
+Citations
+Data provided for free by <a href="https://iextrading.com/developer" target="_blank">IEX</a>. View <a href="https://iextrading.com/api-exhibit-a/" target="_blank">IEX’s Terms of Use</a>.
 
