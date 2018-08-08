@@ -34,36 +34,39 @@ source("~/R/Scripts/DataExploration.R")
 # Use Parabolic SAR http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:parabolic_sar
 # Use RSI http://www.stockcharts.com/school/doku.php?id=chart_school:technical_indicators:relative_strength_index_rsi
 # Create Neural net signal tracker
-# Load Positions
-# POS <- read.csv("~/R/Quant/im_positions.csv")
-# POS %<>% .[-c(1:2),]
+# ----------------------- Mon Aug 06 16:36:13 2018 ------------------------#
+# Load my personal portfolio and watch list
 googlesheets::gs_auth()
-gsPOS <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
-POS <- googlesheets::gs_read(gsPOS,ws=1)
+gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
+Positions <- googlesheets::gs_read(gsPositions,ws=1)
 # ----------------------- Tue Jun 26 13:52:59 2018 ------------------------#
 # Import Dad's portfolio
-Dad_positions2018.06.26 <- read.csv("~/R/Quant/Dad_positions2018-06-26.csv", stringsAsFactors=FALSE)
+Dad_positions <- googlesheets::gs_read(gsPositions,ws=2)
 ```
-```{r 'Calculating Returns'}
+```{r 'Clean Data for IEX Requests'}
+Positions.v <- Positions[-c(1,2),1,drop=T] # Call for vector of positions
+Dad_positions.v <- Dad_positions[-c(1),1,drop=T]
+```
+```{r 'Calculating Cost Basis'}
 CostBasis18 <- read.csv("~/R/Quant/PortfolioCostBasis2018-07-09.csv")
 # ----------------------- Mon Jul 09 19:09:54 2018 ------------------------#
 # Clean Data
 sapply(CostBasis18, class)
 CostBasis18[, c("Date.Sold","Date.Acquired")] %<>% lapply(FUN=lubridate::dmy)
 CostBasis18 %<>% rename(`Gain.Loss.Pct` = `Gain.Loss..`)
-CostBasis18[, c("Proceeds","Cost.per.Share","Cost","Gain.Loss","Gain.Loss.Pct")] %<>% lapply(.,FUN=function(x)gsub("\\$|\\,|\\%","",x)) %>% lapply(as.numeric)
+CostBasis18_Net[, c("Proceeds","Cost.per.Share","Cost","Gain.Loss","Gain.Loss.Pct")] %<>% lapply(.,FUN=function(x)gsub("\\$|\\,|\\%","",x)) %>% lapply(as.numeric)
 # ----------------------- Mon Jul 09 20:01:34 2018 ------------------------#
 # Portfolio Returns YTD 2018
 CostBasis18 %>% group_by(Symbol) %>% summarise_at(.vars = c("Quantity","Cost","Proceeds","Cost.per.Share","Gain.Loss","Gain.Loss.Pct"), .funs = sum) %<>% mutate(Wgt = {Cost/sum(CostBasis18$Cost)}) %>% mutate(W.Yld = Wgt * Gain.Loss.Pct)
 ```
 
-Monitoring ticker data can be accomplished through the IEX API. The following R Script has built in API calls for R
+<p>Monitoring ticker data can be accomplished through the IEX API. The following R Script has built in API calls for R.</p>
 ```{r 'Source IEX API R File'}
 # download.file("https://raw.githubusercontent.com/imanuelcostigan/iex/master/R/iex.R",destfile="iex.R")
 source("iex.R")
 ```
 <a href="https://iextrading.com/developer/docs/#chart" target="_blank">IEX Documentation: Charts</a>
-```{r 'IEX Chart Fields'}
+```{r 'IEX Functions and Chart Fields'}
 iex_fields <- tibble::tribble(
   ~field, ~type, ~desc,
                "high",  "number",                                                                                                 "is available on all charts.",
@@ -82,48 +85,7 @@ iex_fields <- tibble::tribble(
 
 ```
 
-```{r 'Basic IEX API Call'}
-iex_base <- function(version) {
-  "https://api.iextrading.com/"
-}
 
-iex_endpoint <- function(version = "1.0",params = c("stock")) {
-  httr::modify_url(iex_base(), path = paste(version,paste(params,collapse = "/"), sep = "/"))
-}
-```
-```{r 'IEX Quote Call'}
-iex_stock <- function(tSymbols, type = "quote", query_filter = NULL){
-  req <- sapply(tSymbols, function(s){
-  url  <- paste(iex_endpoint(), s, type,sep = "/")
-  })
-  req <- sapply(req,FUN=function(r){
-    httr::modify_url(r,query = paste("filter=",paste(query_filter,collapse=","),sep=""))
-  })
-  return(req)
-}
-
-iex_stock_req <- function(tSymbols, type = "quote", query_filter = NULL){
-  reqs <- iex_stock(tSymbols, type = type, query_filter = query_filter)
-  resps <- sapply(reqs,FUN=function(req){
-    resp <- httr::GET(req)
-if (httr::http_type(resp) != "application/json") {
-   paste("API did not return JSON. Error:", httr::content(resp))
-  parsed <- NA
-  }
-  parsed <- tryCatch({parsed <- jsonlite::fromJSON(httr::content(resp, "text"),simplifyVector = T) %>% unlist}, 
-  warning = function(w) {print(paste("The var:",req," generated the following warning: ",w,sep=""))},
-  error = function(e) {print(paste("The var:",req," generated the following error: ",e,sep=""))
-  out <- NA
-  return(out)},
-  finally = {})
-  
-  
-  Sys.sleep(0.2)
-  return(parsed)})
-
-  return(resps)
-}
-```
 ## Financials
 ```{r 'Responses per Query Type for Filtering Purposes'}
 # ----------------------- Fri Jun 29 18:52:46 2018 ------------------------#
@@ -140,9 +102,13 @@ iex_responses$financials <- html_table(read_html("https://iextrading.com/develop
 ```
 
 ```{r 'Financial Stats'}
-quotes <- iex_stock_req(tSymbols = POS[,1,drop=T],type = "quote", query_filter = c("marketCap","peRatio","week52High","week52Low","ytdChange"))
-stats <- iex_stock_req(tSymbols = POS[,1,drop=T],type = "stats", query_filter = c("peRatioHigh","peRatioLow","week52change	","returnOnEquity","consensusEPS","ttmEPS","profitMargin","year5ChangePercent","year1ChangePercent","ytdChangePercent","month6ChangePercent","month3ChangePercent","month1ChangePercent","cash","debt"))
-fin_stats <- sapply(names(quotes),function(n){c(quotes[[n]],stats[[n]])},simplify=FALSE)
+# ----------------------- Wed Aug 08 17:13:33 2018 ------------------------#
+# Create a Data frame of financial metrics using IEX
+
+quotes <- iex_stock_req(tSymbols = Positions.v,type = "quote", query_filter = c("marketCap","peRatio","week52High","week52Low","ytdChange"))
+stats <- iex_stock_req(tSymbols = Positions.v,type = "stats", query_filter = c("peRatioHigh","peRatioLow","week52change	","returnOnEquity","consensusEPS","ttmEPS","profitMargin","year5ChangePercent","year1ChangePercent","ytdChangePercent","month6ChangePercent","month3ChangePercent","month1ChangePercent","cash","debt"))
+cbind(quotes,stats)
+
 ```
 
 ```{r 'Add Risk Metrics'}
@@ -157,11 +123,11 @@ if(!is.null(timeframe)){
 out <- vector("numeric",length = 4)
 out[1] <- mod[["coefficients"]][["seq_along(date)"]]
 out[2] <- caret::RMSE(mod[["fitted.values"]],mod[["model"]][["close"]])
-
 mod_sum <- summary(mod)
 out[3] <- mod_sum %>% {.[["adj.r.squared"]]}
 out[4] <- sum(sign(mod_sum[["residuals"]]) < 0)/length(mod_sum[["residuals"]])
-names(out) <- c("coef","rmse","adj.r","pctNeg")
+out[5] <- (mod_sum[["sigma"]] + mean(abs(mod_sum[["residuals"]][mod_sum[["residuals"]] < 0]),na.rm = T)) / pos[[l]][nrow(pos[[l]]),"open"]
+names(out) <- c("coef","rmse","adj.r","pctNeg","sigma")
 return(out)
 })
 names(key_stats) <- names(pos)
@@ -175,33 +141,14 @@ key_stats %>% gather(key = "stat", value = "value")
 
 ```{r 'Display Financial Stats'}
 fin_statsTEST <- do.call(rbind,fin_stats) %>% as.data.frame
-DT::datatable()
 ```
 
 ```{r 'Batch Symbol Timeseries Data Request'}
-iex_batch <- function(tSymbols, range, filter = NULL) {
-  q <- paste("symbols=",paste(tSymbols,collapse=","),paste("&types=chart",sep=""),paste("&range=",range,sep=""),sep="")
-  if(!is.null(filter)){
-    q <- paste(q,paste("&filter=",paste(filter,collapse=","),sep=""),sep = "")
-  }
-  
-  (url <- httr::modify_url(iex_endpoint(params = c("stock","market","batch")), query = paste(q,sep="/")))
-}
-iex_batch_req <- function(tSymbols, range, filter = NULL){
-resp <- httr::GET(iex_batch(tSymbols, range, filter = filter))
-if (httr::http_type(resp) != "application/json") {
-    stop("API did not return JSON", call. = FALSE)
-  }
-  parsed <- jsonlite::fromJSON(httr::content(resp, "text"),simplifyDataFrame = T,flatten = T)
-  nms <- names(parsed)
-  parsed %<>% purrr::flatten()
-  names(parsed) <- nms
-  return(parsed)
-  on.exit(Sys.sleep(0.2))
-}
-
-positions <- iex_batch_req(tSymbols = POS[-c(1,2),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
+Positions.ts <- iex_batch_req(tSymbols = Positions.v, range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
+Positions.ts[["GOOG"]] 
 dad_positions <- iex_batch_req(tSymbols = Dad_positions2018.06.26[-c(1),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
+
+time(test.ts)
 ```
 
 ```{r 'Add Sign indicator_Change Date'}
