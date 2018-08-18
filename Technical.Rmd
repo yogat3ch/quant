@@ -22,7 +22,7 @@ rmarkdown::html_dependency_bootstrap("spacelab")
 rmarkdown::html_dependency_jqueryui()
 set.seed(1)
 options(scipen=12)
-req.packages <- c("tidyverse","dplyr","htmltools","magrittr","QuantTools","quantmod")
+req.packages <- c("tidyverse","dplyr","htmltools","magrittr","QuantTools","quantmod","lubridate")
 Vectorize(function(pkg)suppressPackageStartupMessages(library(pkg,character.only = T)))(pkg=req.packages)
 source("~/R/Scripts/DataExploration.R")
 ```
@@ -107,21 +107,48 @@ iex_responses$financials <- html_table(read_html("https://iextrading.com/develop
 
 quotes <- iex_stock_req(tSymbols = Positions.v,type = "quote", query_filter = c("marketCap","peRatio","week52High","week52Low","ytdChange"))
 stats <- iex_stock_req(tSymbols = Positions.v,type = "stats", query_filter = c("peRatioHigh","peRatioLow","week52change	","returnOnEquity","consensusEPS","ttmEPS","profitMargin","year5ChangePercent","year1ChangePercent","ytdChangePercent","month6ChangePercent","month3ChangePercent","month1ChangePercent","cash","debt"))
-cbind(quotes,stats)
+fin_stats <- cbind(quotes,stats)
 
 ```
 
-```{r 'Add Risk Metrics'}
-pos_scaled <- lapply(pos,FUN = function(l){l$close %<>% scale %>% as.numeric
+```{r 'Batch Symbol Timeseries Data Request'}
+Positions.ts <- iex_batch_req(tSymbols = Positions.v, range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
+dad_positions.ts <- iex_batch_req(tSymbols = Dad_positions.v, range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T]) 
+```
+```{r 'Add Sign indicator_Change Date'}
+# ----------------------- Tue Jun 26 14:54:21 2018 ------------------------#
+# Add sign indicator for color change in candlestick graph 
+
+Positions.ts %<>% lapply(FUN=function(l){
+  l$chg <- sign(as.numeric(l$changePercent)) %>% as.character() %>% as.factor()
   l})
-key_stats <- lapply(seq_along(pos), pos=pos_scaled,timeframe = NULL, FUN = function(l,pos,timeframe){
-if(!is.null(timeframe)){
-  mod <- lm(close ~ seq_along(date), data = pos[[l]] %>% filter(date > lubridate::floor_date(lubridate::today(), unit = timeframe)))
+dad_positions.ts %<>% lapply(FUN=function(l){
+  l$chg <- sign(as.numeric(l$changePercent)) %>% as.character() %>% as.factor()
+  l})
+
+```
+```{r 'Convert to TimeSeries xts',eval = F}
+# ----------------------- Tue Aug 14 01:49:33 2018 ------------------------#
+# Already converted after change to iex_batch_req
+
+tpos <- lapply(pos,FUN=function(l){xts(l[,not(names(l) %in% "date")], order.by = l$date)})
+dad_tpos <- lapply(dad_pos,FUN=function(l){xts(l[,not(names(l) %in% "date")], order.by = l$date)})
+```
+```{r 'Add Risk Metrics'}
+pos_scaled <- lapply(Positions.ts,FUN = function(l){l$close %<>% scale %>% as.numeric
+  l})
+key_stats <- lapply(seq_along(Positions.ts), pos=pos_scaled,timeframe = "year", FUN = function(l,pos,timeframe){
+if(!is.null(timeframe) & any(class(pos[[1]])=="data.frame")){
+  data <- pos[[l]] %>% filter(date > lubridate::floor_date(lubridate::today(), unit = timeframe))
+}else if(!is.null(timeframe) & any(class(pos[[1]])=="xts")){
+  data <- pos[[l]][time(pos[[l]]) > lubridate::floor_date(lubridate::today(),timeframe),]
 }else {
-  mod <- lm(close ~ seq_along(date), data=pos[[l]])
+  data <- pos[[l]]
 }
+data$ind <- 1:nrow(data)
+mod <- lm(close ~ ind, data = data)
 out <- vector("numeric",length = 4)
-out[1] <- mod[["coefficients"]][["seq_along(date)"]]
+out[1] <- mod[["coefficients"]][["ind"]]
 out[2] <- caret::RMSE(mod[["fitted.values"]],mod[["model"]][["close"]])
 mod_sum <- summary(mod)
 out[3] <- mod_sum %>% {.[["adj.r.squared"]]}
@@ -130,48 +157,18 @@ out[5] <- (mod_sum[["sigma"]] + mean(abs(mod_sum[["residuals"]][mod_sum[["residu
 names(out) <- c("coef","rmse","adj.r","pctNeg","sigma")
 return(out)
 })
-names(key_stats) <- names(pos)
-
-key_stats %<>% do.call("rbind",.) 
-key_stats$symbol <- symbol
-key_stats %<>% reshape2::melt()
-names(key_stats) <- c("stat","timeframe","value","symbol")
-key_stats %>% gather(key = "stat", value = "value")
+names(key_stats) <- names(pos_scaled)
+key_stats %<>% do.call("rbind",.) # From list to dataframe
 ```
 
-```{r 'Display Financial Stats'}
-fin_statsTEST <- do.call(rbind,fin_stats) %>% as.data.frame
+```{r 'Combine & Financial Stats'}
+fin_stats_complete <- cbind(key_stats,fin_stats) %>% as.data.frame
+DT::datatable(fin_stats_complete)
 ```
 
-```{r 'Batch Symbol Timeseries Data Request'}
-Positions.ts <- iex_batch_req(tSymbols = Positions.v, range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
-Positions.ts[["GOOG"]] 
-dad_positions <- iex_batch_req(tSymbols = Dad_positions2018.06.26[-c(1),1,drop=T][!is.na(POS[-c(1,2),1])], range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
 
-time(test.ts)
-```
 
-```{r 'Add Sign indicator_Change Date'}
-# ----------------------- Tue Jun 26 14:54:21 2018 ------------------------#
-# Add sign indiicator for color change in candlestick graph 
 
-pos <- lapply(positions,FUN=function(l){l %<>% mutate(chg = sign(changePercent))
-  l$chg %<>% as.factor
-  l})
-dad_pos <- lapply(dad_positions,FUN=function(l){l %<>% mutate(chg = sign(changePercent))
-  l$chg %<>% as.factor
-  l})
-# ----------------------- Tue Jun 26 14:27:25 2018 ------------------------#
-# Change date to a date
-pos <- lapply(pos,FUN=function(l){l$date %<>% as.character %>% as.POSIXct(x = ., tz = "", format = c("%Y-%m-%d"))
-  return(l)})
-dad_pos <- lapply(dad_pos,FUN=function(l){l$date %<>% as.character %>% as.POSIXct(x = ., tz = "", format = c("%Y-%m-%d"))
-  return(l)})
-```
-```{r 'Convert to TimeSeries xts'}
-tpos <- lapply(pos,FUN=function(l){xts(l[,not(names(l) %in% "date")], order.by = l$date)})
-dad_tpos <- lapply(dad_pos,FUN=function(l){xts(l[,not(names(l) %in% "date")], order.by = l$date)})
-```
 
 ## Candlestick Graphs
 ### SEP IRA 
@@ -224,29 +221,138 @@ lapply(pos_ggp,FUN=function(ggp){plotly::ggplotly(ggp, dynamicTicks = T, tooltip
 )
 ```
 
-```{r 'Finam Hourly Data'}
-# Pull Data 
-TS.adxsar <- POS$Symbol %>% as.character %>% sapply(FUN=function(sym){QuantTools::get_finam_data(sym,from=lubridate::mdy("01-01-2015"), to=lubridate::now(), period = "hour")},simplify = F)
-# TS.adxsar %<>% lapply(FUN=function(l){
-#   l <- l[,c(1:6)]
-# }) # Remove ADX
-# Add ADX
-TS.adxsar %<>%  lapply(FUN=function(l){
-  cbind(l,TTR::ADX(l[,c("high","low","close")],n=20)) %>% rename(ADXv=ADX)
+
+
+
+# Signals & Indicators
+## Response Variables
+<p>The response variables of interest currently are:
+<ul>
+<li> the percent change for varying periods of time </li>
+<li> the percent of days of the time period in which gains were recognized</li>
+<li> the sd for the same time periods </li>
+</ul>
+</p>
+```{r 'Input RV Time Periods'}
+# ----------------------- Fri Aug 17 15:23:09 2018 ------------------------#
+# timeperiods can be in Date: duration format, or number of intra-day observations. ie lubridate::duration(1,"weeks") or lubridate::dweeks(1). 
+timeperiods <-c(lubridate::dweeks(1),lubridate::dweeks(2),lubridate::duration(1,"months"))
+```
+```{r 'Percent Change'}
+pChange <- function(cl,wind=5,verbose=F){
+  vout <- sapply(seq_along(cl),wind=wind,cl=cl,verbose=verbose,FUN=function(i,wind,cl,verbose){
+   if(lubridate::is.duration(wind)!=T){ 
+    if(i-wind < 1){ind <- 1}else {ind <- i-wind}
+    if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
+   }else if(lubridate::is.duration(wind)){
+     if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
+    if(verbose==T){time(cl)[i]}
+   }
+    out <- cl[[ind]]-cl[[i]]
+    if(is.na(out)){out <- 0}
+    return(out)
+  })
+}
+# ----------------------- Fri Aug 17 15:53:03 2018 ------------------------#
+# For Testing
+# cl <- Positions.ts$GOOG$close
+# wind <- timeperiods[1]
+# verbose <- F
+# test <- pChange(cl,wind,verbose)
+```
+
+```{r 'Standard Deviation'}
+sDxts <- function(cl,wind=5,verbose=F){
+  vout <- sapply(seq_along(cl),wind=wind,cl=cl,verbose=verbose,FUN=function(i,wind,cl,verbose){
+    if(lubridate::is.duration(wind)!=T){
+      if(i-wind < 1){ind <- 1}else {ind <- i-wind}
+      if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
+    }else if(lubridate::is.duration(wind)){
+      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
+      if(verbose==T){time(cl)[i]}
+    }
+  cl %<>% scale
+  out <- sd(cl[c(seq(i,ind))],na.rm = T)
+  if(is.na(out)){out <- 0}
+return(out)
+  })
+}
+# test <- sd.xts(cl,wind,F)
+```
+
+
+```{r 'Percent Rise'}
+pRise <- function(cl,wind,verbose=F){
+  vout <- sapply(seq_along(cl),wind=wind,cl=cl,verbose=verbose,FUN=function(i,wind,cl,verbose){
+    if(i==1){return(0)} # Account for a single day that will error diff
+    if(lubridate::is.duration(wind)!=T){
+      if(i-wind < 1){ind <- 1}else {ind <- i-wind}
+      if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
+    }else if(lubridate::is.duration(wind)){
+      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
+      if(verbose==T){time(cl)[i]}
+    }
+   out <- cl[c(seq(i,ind))] %>% rev() %>% diff() %>% sign() %>% table() %>% prop.table() %>% .["1"]
+   if(is.na(out)){return(0)} # Account for no rise
+    return(out)
+   # Get the values in the window. Because seq is in reverse, the values need to flipped with rev. Take the diff, get the sign of the difference, table that, then give proportions, assign the proportion associated with positive gains.
+   
+  })
+}
+#test <- pRise(cl,wind,verbose=F)
+```
+
+```{r 'addRV Meta Function'}
+# ----------------------- Sat Aug 18 07:44:32 2018 ------------------------#
+# This Function accepts an input of the types of RVs and adds them to the list of timeseries rather than running each chunk individually.
+
+test <- lapply(Positions.ts,rv = c("pChange","pRise","sd"), tp = timeperiods, FUN = function(l,rv,tp, verbose = F){
+vout <- list()
+# ----------------------- Sat Aug 18 07:12:17 2018 ------------------------#
+# percent Change
+if(any(rv == "pChange")){
+vout$pChanges <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    pChange(l$close,x,verbose)
+  })
+}
+# ----------------------- Sat Aug 18 07:12:02 2018 ------------------------#
+# percent Rise
+if(any(rv == "pRise")){
+vout$pRise <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    pRise(l$close,x,verbose)
+  })
+}
+# ----------------------- Sat Aug 18 07:13:12 2018 ------------------------#
+# Standard Deviation
+  if(any(rv == "sd")){
+vout$sd <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    sDxts(l$close,x,verbose)
+  })
+}
+# Label all columns
+vout <- lapply(seq_along(vout),tp = tp, nms = names(vout),vout=vout, FUN = function(o,tp,nms,vout){
+  if(lubridate::is.duration(tp)){tp <- timeperiods %>% as.character() %>% stringr::str_extract("((?<=\\~)[\\.A-Za-z0-9\\s]+)") %>% gsub(" ","",.)}
+  colNames <- sapply(tp,nm = nms[o],FUN = function(x,nm){
+    paste0(nm,".", x)
+  })
+  colnames(vout[[o]]) <- colNames
+  return(vout[[o]])
 })
+rvs <- do.call("cbind",vout)
+l <- cbind(l,rvs)
+})
+```
+
+```{r}
+
+# ----------------------- Thu Apr 26 11:36:55 2018 ------------------------#
+# Join the buy points with the loss or gain per period and see if there are patterns
+{TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]} %>% length
+TS.adxsar$GOOG %>% filter(Action=="buy") %>% select(time,PR,sar,ADXv,DX,Diff,sar.i) %>% cbind(G.L={TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]}) %>% lm(G.L ~ ., data=.) %>% summary
 
 ```
-```{r 'YTD 2018 Linear Regression Models'}
-lms <- lapply(TS.adxsar, function(l){
-  if(str_detect(names(l),"time") == T){
-  l <- l %>% mutate("date" = lubridate::as_date(time)) %>% group_by(date) %>%  summarize_all(.funs = mean) %>% mutate_if(.predicate = is.numeric, .funs = scale)
-  }
-  ytd  <- l %>% filter(date > lubridate::ymd("2018-01-01"))
-  glm(close ~ date, data = ytd, family = "gaussian")
-})
-lapply(lms,summary) %>% lapply(purrr::pluck("coefficients"))
-```
-# Signals per Indicator
+
+
 ```{r 'ADX Signal Traditional'}
 siADX <- function(adx,ni,pip,threshold=20,wind=3,verbose=F) {
   vout <- sapply(seq_along(adx),adx=adx,ni=ni,pip=pip,threshold=threshold,wind=wind,FUN=function(i,adx,ni,pip,threshold){
@@ -502,25 +608,7 @@ TS.adxsar %<>% lapply(FUN=function(l){
 })
 googleVis::gvisTable(TS.adxsar$GOOG) %>% plot
 ```
-```{r 'Percent Rise'}
-PR <- function(close,wind,verbose=F){
-  vout <- sapply(seq_along(close),wind=wind,close=close,verbose=verbose,FUN=function(i,wind,close,verbose){
-    if(verbose==T){print(i)}
-    if(i-wind < 1){ind <- 1}else {ind <- i-wind}
-   out <- prop.table(table(sign(diff(rev(close[c(seq(i,ind))])))))["1"] # Get the values in the window. Because seq is in reverse, the values need to flipped with rev. Take the diff, get the sign of the difference, table that, then give proportions, assign the proportion associated with positive gains.
-  })
-}
-```
-```{r 'Apply Percent Rise'}
-TS.adxsar %>% lapply(FUN=function(l){
-  l %<>% mutate(PRise=PR(close,35,verbose=F)) 
-})
-# ----------------------- Thu Apr 26 11:36:55 2018 ------------------------#
-# Join the buy points with the loss or gain per period and see if there are patterns
-{TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]} %>% length
-TS.adxsar$GOOG %>% filter(Action=="buy") %>% select(time,PR,sar,ADXv,DX,Diff,sar.i) %>% cbind(G.L={TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]}) %>% lm(G.L ~ ., data=.) %>% summary
 
-```
 <p>Let's step up the complexity a bit with a machine learning algorithm that takes a lag window as inputs and outputs predictions for price movement.</p>
 
 ```{r}
@@ -1091,3 +1179,81 @@ df.Action %<>% mutate(Date=TS.GOOG[ind,]$date,Price=TS.GOOG[ind,]$close)
 Citations
 Data provided for free by <a href="https://iextrading.com/developer" target="_blank">IEX</a>. View <a href="https://iextrading.com/api-exhibit-a/" target="_blank">IEX’s Terms of Use</a>.
 
+
+### Appendix
+```{r 'Finam Hourly Data'}
+# Pull Data Deprecated 
+TS.adxsar <- POS$Symbol %>% as.character %>% sapply(FUN=function(sym){QuantTools::get_finam_data(sym,from=lubridate::mdy("01-01-2015"), to=lubridate::now(), period = "hour")},simplify = F)
+# TS.adxsar %<>% lapply(FUN=function(l){
+#   l <- l[,c(1:6)]
+# }) # Remove ADX
+# Add ADX
+TS.adxsar %<>%  lapply(FUN=function(l){
+  cbind(l,TTR::ADX(l[,c("high","low","close")],n=20)) %>% rename(ADXv=ADX)
+})
+
+```
+```{r 'YTD 2018 Linear Regression Models'}
+lms <- lapply(TS.adxsar, function(l){
+  if(str_detect(names(l),"time") == T){
+  l <- l %>% mutate("date" = lubridate::as_date(time)) %>% group_by(date) %>%  summarize_all(.funs = mean) %>% mutate_if(.predicate = is.numeric, .funs = scale)
+  }
+  ytd  <- l %>% filter(date > lubridate::ymd("2018-01-01"))
+  glm(close ~ date, data = ytd, family = "gaussian")
+})
+lapply(lms,summary) %>% lapply(purrr::pluck("coefficients"))
+```
+```{r 'Apply Percent Rise'}
+Positions.ts %<>% lapply(tp = timeperiods,verbose=F,FUN=function(l,tp,verbose){
+  
+    
+  # ----------------------- Fri Aug 17 16:06:50 2018 ------------------------#
+  # For debug
+  # tp <- timeperiods
+  # l <- Positions.ts$GOOG
+  pRises <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    pRise(l$close,x,verbose)
+  })
+  l <- cbind(l,pRises)
+  colIndexes<- seq({ncol(l)-length(tp)+1},ncol(l))
+  colNames <- sapply(tp,FUN = function(x){
+    paste0("pRise.", x)
+  })
+  names(l)[colIndexes] <- colNames
+  return(l)
+})
+```
+```{r 'Apply sDxts'}
+Positions.ts %<>% lapply(tp = timeperiods,verbose=F,FUN=function(l,tp,verbose){
+  # ----------------------- Fri Aug 17 16:06:50 2018 ------------------------#
+  # For debug
+  # tp <- timeperiods
+  # l <- Positions.ts$GOOG
+  
+  l <- cbind(l,sDs)
+  colIndexes<- seq({ncol(l)-length(tp)+1},ncol(l))
+  colNames <- sapply(tp,FUN = function(x){
+    paste0("sd.", x)
+  })
+  names(l)[colIndexes] <- colNames
+  return(l)
+})
+```
+```{r 'Apply Percent Change'}
+Positions.ts %<>% lapply(tp = timeperiods,verbose = F,FUN = function(l,tp,verbose){
+  # ----------------------- Fri Aug 17 16:06:50 2018 ------------------------#
+  # For debug
+  # tp <- timeperiods
+  # l <- Positions.ts$GOOG
+  pChanges <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    pChange(l$close,x,verbose)
+  })
+  l <- cbind(l,pChanges)
+  colIndexes<- seq({ncol(l)-length(tp)+1},ncol(l))
+  colNames <- sapply(tp,FUN = function(x){
+    paste0("pChange.", x)
+  })
+  names(l)[colIndexes] <- colNames
+  return(l)
+})
+```
