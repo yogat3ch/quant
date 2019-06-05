@@ -33,6 +33,7 @@ HDA::startPkgs(c("tidyverse","dplyr","htmltools","magrittr","QuantTools","quantm
   <li>To generate at least 10% annual returns.</li>
   <li>To develop a workflow that rapidly transforms OHLC into an indicator rich xts or tbl_time</li>
   <li>To outperform the following benchmark strategies on any single position:<ul>
+    <li>The Gold Cross (mean reversion)</li>
     <li>The 12,26,9 MACD</li>
     <li>The 14 RSI</li>
     <li>Buy & Hold</li>
@@ -44,6 +45,13 @@ HDA::startPkgs(c("tidyverse","dplyr","htmltools","magrittr","QuantTools","quantm
   </ul> </li>
 </ol>
 
+TODO - 2019-05-30 1903
+- Unbundle Add TSLs from Add Vars DONE
+- Standardize jobDat_in, jobDat_out to pass data to jobs DONE
+- Convert Add RVs to parallel DONE
+- Convert optimReturns to parallel UNTESTED
+- Rework ML model builder to build for the optimum TSL only
+- Weighted TSLs by recency?
 ```{r 'Load Data'}
 # ----------------------- Sat Mar 24 08:17:41 2018 ------------------------#
 # Inputs: Timeseries data, Lag for LM
@@ -266,14 +274,7 @@ lapply(pos_ggp,FUN=function(ggp){plotly::ggplotly(ggp, dynamicTicks = T, tooltip
 
 
 # Signals & Indicators
-## Response Variables
-<p>The response variables of interest currently are:
-<ul>
-<li> the percent change for varying periods of time </li>
-<li> the percent of days of the time period in which gains were recognized</li>
-<li> the sd for the same time periods </li>
-</ul>
-</p>
+
 Set the windows:
 ```{r 'Set Windows'}
 wind  <-  c(weeks = 7, months = 7*4, quarters = 7*4*3)
@@ -281,23 +282,7 @@ wind  <-  c(weeks = 7, months = 7*4, quarters = 7*4*3)
 <button class="btn btn-sm btn-success" href="#sma" role="button" data-toggle="collapse" data-target="#demo">View Simple Moving Averages</button>
 <div id="sma" class="collapse">
 ```{r 'Add SMA'}
-Positions_ts %<>% lapply(wind = c(wind,200) , function(l, wind){
-  if (all(!is.na(l[,c("high","low","close")])) ) {
-  if (nrow(l) > max(wind)) message(paste0("Number of observations in", xtsAttributes(l, user = T)," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
-    out_sma <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], l = l, function(.x, l){
-      out <- TTR::SMA(l[,c("close")], .x)
-      for (i in which(is.na(out))) {
-        out[i] <- mean(l[1:i,"close", drop = T])
-      }
-      names(out) <- paste(names(out), .x, sep = ".") 
-      return(out)
-    }) 
-    out_sma <- do.call("cbind", out_sma)
-    if (stringr::str_which(names(l), "SMA\\.\\d{1,2}") %>% length > 0) l <- l[,-stringr::str_which(names(l), "SMA\\.\\d{1,2}")]
-    out <- cbind(l, out_sma) 
-    } else out <- l
-  return(out)
-}) 
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Simple Moving Averages") 
 ```
 </div>
 
@@ -305,51 +290,9 @@ Positions_ts %<>% lapply(wind = c(wind,200) , function(l, wind){
 <button class="btn btn-sm btn-success" href="#ADX" role="button" data-toggle="collapse" data-target="#demo">View ADX</button>
 <div id="adx" class="collapse">
 ```{r 'Add ADX'}
-Positions_ts %<>% lapply(wind = wind, function(l, wind){
-  if (nrow(l) > max(wind)) message(paste0("Number of observations in", xtsAttributes(l, user = T)," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
-  if (all(!is.na(l[,c("high","low","close")])) ) {
-    adx <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], l = l, function(.x, l){
-      out <- TTR::ADX(l[,c("high","low","close")], .x)
-      names(out) <- paste(names(out), .x, sep = ".") 
-      return(out)
-    }) 
-    adx <- do.call("cbind", adx)
-    out <- cbind(l, adx) %>% na.locf(fromLast = T)
-  }
-  else out <- l
-  return(out)
-}) 
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ADX") 
 ```
 
-```{r 'Compress ADX'}
-Positions_ts %<>% lapply(wind = wind, compress = T, function(l, wind, compress){
-  if (nrow(l) > max(wind)) message(paste0("Number of observations in", xtsAttributes(l, user = T)," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
-  if (all(!is.na(l[,c("high","low","close")])) ) {
-    adx <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], env = parent.frame(), function(.x, env){
-      out <- TTR::ADX(l[,c("high","low","close")], .x) %>% na.locf(fromLast = T)
-      if (compress) {
-        out <- apply(out, 1, function(r){
-          out <- r[["DIp"]] - r[["DIn"]] * log(ifelse(is.na(r[["ADX"]]),r[["DX"]],r[["ADX"]]))
-        }) %>% xts::as.xts(order.by = time(l))
-        colnames(out) <- paste("ADXc", .x, sep = ".")
-      }else {colnames(out) <- paste(colnames(out), .x, sep = ".")}
-      return(out)
-    }) 
-    adx <- do.call("cbind", adx)
-    l <- l[,-grep("^ADX|DI\\w.*\\d$",names(l))]
-    out <- cbind(l, adx) 
-  }
-  else out <- l
-  return(out)
-}) 
-l %>% names
-lm(months_rv ~ ADXc.28,data = Positions_ts$GOOG) %>% summary
-l %>% as.data.frame %>% rownames_to_column("Date") %>% mutate_at(vars("Date"),lubridate::ymd) %>% ggplot(data = .,mapping = aes(x = Date))+
-geom_line(aes(y = close), color = HDA::ggColor(3)[1]) + 
-  geom_line(aes(y = ADXc.28), color = HDA::ggColor(3)[2]) +
-  geom_line(aes(y = months_rv), color = HDA::ggColor(3)[3])
-
-```
 
 <strong>Uptrend</strong>
 [type = stock] AND [country = US] 
@@ -370,43 +313,14 @@ AND [Daily Minus DI(14) crosses Daily Plus DI(14)]
 AND [Daily Close < Daily SMA(50,Daily Close)]
 
 ```{r 'Add ADX Signal'}
-Positions_ts %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, function(l, threshold1, threshold2, wind, verbose){
-  if (nrow(l) > max(wind)) message(paste0("Number of observations in", xtsAttributes(l, user = T)," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
-  if (all(!is.na(l[,c("high","low","close")]))  ) {
-    out <- list()
-    for (i in seq_along(wind[sum(!is.na(l[,"close"])) > wind])) {
-      cls <- c(paste0(c("ADX.","DIp.","DIn.","DX.","SMA."), wind[i]),"close")
-      out[[i]] <- apply(l[,cls], 1, function(r, env = parent.frame()){
-        if (any(is.na(r))) {return("0")} # Check for NA and return none if present
-        if (r[[cls[1]]] > threshold1 & r[[cls[2]]] > r[[cls[3]]] & r[["close"]] > r[[cls[4]]]) {
-          return("1") # Moderate uptrend
-        }else if (r[[cls[1]]] > threshold2 & r[[cls[2]]] > r[[cls[3]]] & r[["close"]] > r[[cls[4]]]) {
-          return("2") # Strong uptrend
-        }else if (r[[cls[1]]] > threshold1 & r[[cls[2]]] < r[[cls[3]]] & r[["close"]] < r[[cls[4]]]) {
-          return("-1") # Moderate Downtrend
-        }else if (r[[cls[1]]] > threshold2 & r[[cls[2]]] < r[[cls[3]]] & r[["close"]] < r[[cls[4]]]) {
-          return("-2") # Strong downtrend
-        } else return("0")
-        if (verbose == T) print(time(r))
-      })
-    }
-  } else return(l)
-  nms <- paste0("ADX.", wind, "_i")
-  out <- do.call("cbind", out) %>% xts(order.by = time(l))
-  colnames(out) <- nms
-  if (verbose == T) print(identical(time(out), time(l)))
-  out <- cbind.xts(l, out)
-  if (verbose == T) print(nrow(out))
-  return(out)
-  
-})
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ADX signal") 
+```
+
+```{r 'Add Compressed ADX'}
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Compressed ADX") 
 ```
 </div>
-```{r}
-Positions_ts %>% purrr::map(function(l){
-  names(l)[stringr::str_which(names(l),"\\.1$")] %>% str_replace("\\.1$","")
-})
-```
+
 
 ## Add Variables in Article
 Referencing: <a href="https://www.quantinsti.com/blog/predictive-modeling-algorithmic-trading/">R Predictive Algorithm</a>
@@ -416,29 +330,7 @@ Referencing: <a href="https://www.quantinsti.com/blog/predictive-modeling-algori
 ```{r 'Add Williams Indicator'}
 # ----------------------- Fri May 04 10:35:38 2018 ------------------------#
 # Add the Williams %R where per = vector of period lengths.
-Positions_ts %<>% lapply(wind = c(7, 7*4, 7*4*3), verbose = F, function(l, wind, verbose){
-  if (nrow(l) > max(wind)) message("Number of observations is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations.")
-  if (all(!is.na(l[,c("high","low","close")])) ) {
-    WpR <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], function(.x, env = parent.frame()){
-      out <- TTR::WPR(l[,c("high","low","close")],n = .x)
-      for (i in which(is.na(out))) {
-        hmax <- max(l[1:i,"high"])
-        if (verbose) print(hmax)
-        lmin <- min(l[1:i,"low"])
-        if (verbose) print(lmin)
-        pctR <- ifelse({(hmax - l[i,"close"])/(hmax - lmin)} %>% is.nan, 0.5, (hmax - l[i,"close"])/(hmax - lmin))
-        out[i] <- pctR
-      }
-      return(out)
-    })
-    if (verbose) print(WpR)
-    WpR <- do.call("cbind", WpR)
-    colnames(WpR) <- paste("WpR", wind[sum(!is.na(l[,"close"])) > wind], sep = ".")
-    if (stringr::str_which(names(l),"^WpR\\.\\d{1,2}") %>% length > 0) l <- l[,-c(stringr::str_which(names(l),"^WpR\\.\\d{1,2}"))]
-    out <- cbind(l,WpR) }
-  else out <- l
-  return(out)
-})
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Williams Percent R") 
 ```
 </div>
 
@@ -446,23 +338,7 @@ Positions_ts %<>% lapply(wind = c(7, 7*4, 7*4*3), verbose = F, function(l, wind,
 <button class="btn btn-sm btn-success" href="#rsi" role="button" data-toggle="collapse" data-target="#demo">View RSI</button>
 <div id="rsi" class="collapse">
 ```{r 'Add RSI'}
-rsi_wind <- c(7, 14)
-Positions_ts %<>% lapply(wind = rsi_wind, verbose = F, function(l, wind, verbose){
-  if (nrow(l) > max(wind)) message("Number of observations is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations.")
-  if (all(!is.na(l[,c("high","low","close")])) ) {
-    rsic <- purrr::map(wind[sum(!is.na(l[,"close"])) > wind], l = l, function(.x, l){
-      out <- TTR::RSI(l[,c("close")], n = .x)
-      out <- na.locf(out, fromLast = T)
-      return(out)
-    })
-    if (verbose == T) any(is.na(rsic)) %>% print
-    rsic <- do.call("cbind", rsic)
-    colnames(rsic) <- paste("rsi", wind, sep = ".")
-    if (grep("^rsi\\.\\d{1,2}$",names(l)) %>% length > 0) l <- l[, -grep("^rsi\\.\\d{1,2}$",names(l))]
-    out <- cbind(l,rsic)
-  } else out <- l
-  return(out)
-})
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add RSI") 
 ```
 
 <strong>Oversold in Uptrend</strong>
@@ -480,40 +356,9 @@ AND [Daily SMA(60,Daily Close) > 20]
 AND [Daily Close < Daily SMA(200,Daily Close)] 
 AND [Daily RSI(5,Daily Close) >= 70]
 ```{r 'Add RSI Indicator',eval=F}
-# 
 # ----------------------- Tue Apr 24 11:26:17 2018 ------------------------#
 # Needs refinemnt of factor indicators
-Positions_ts %<>% lapply(wind = rsi_wind, threshold1 = c(high = 70, low = 30), threshold2 = c(high = 80, low = 20), verbose = F, function(l, wind, threshold1, threshold2, verbose){
-  if (nrow(l) > max(wind)) message("Number of observations is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations.")
-  if (all(!is.na(l[,c("high","low","close")])) ) {
-    out <- list()
-    for (i in seq_along(wind[sum(!is.na(l[,"close"])) > wind])) { # Up to the second to last window
-      cls <- c(paste0(c("rsi."), wind[i]), "SMA.200","close")
-      out[[i]] <- apply(l[,cls], 1, function(r, env = parent.frame()){
-        if (any(is.na(r))) {return("0")} # Check for NA and return none if present
-        if (r[[cls[1]]] < threshold1["low"] & r[[cls[2]]] < r[["close"]] ) {
-          return("-1") # Moderate oversold
-        }else if (r[[cls[1]]] < threshold2["low"] & r[[cls[2]]] < r[["close"]]) {
-          return("-2") # Strong oversold
-        }else if (r[[cls[1]]] > threshold1["high"] & r[[cls[2]]] > r[["close"]]) {
-          return("1") # Moderate overbought
-        }else if (r[[cls[1]]] > threshold2["high"] & r[[cls[2]]] > r[["close"]]) {
-          return("2") # Strong overbought
-        } else return("0")
-        if (verbose == T) print(time(r))
-      })
-    }
-    nms <- paste0("rsi.", wind, "_i")
-    out <- do.call("cbind", out) %>% xts(order.by = time(l))
-    colnames(out) <- nms
-    if (verbose == T) print(identical(time(out), time(l)))
-    if (grep("^rsi.*i$",names(l)) %>% length > 0) l <- l[,-grep("^rsi.*i$",names(l))]
-    out <- cbind.xts(l, out)
-    if (verbose == T) print(nrow(out))
-  }else return(l)
-  return(out)
-})
-
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add RSI Indicator") 
 ```
 </div>
 
@@ -528,40 +373,7 @@ Positions_ts %<>% lapply(wind = rsi_wind, threshold1 = c(high = 70, low = 30), t
 
 
 ```{r 'Add ROC and Momentum'}
-Positions_ts %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
-  if (nrow(l) > max(wind)) message(paste0("Number of observations in", xtsAttributes(l, user = T)," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
-  if (all(!is.na(l[,c("high","low","close")])) ) {
-    # ROC
-    roc <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], env = parent.frame(),function(.x, env){
-      roc <- TTR::ROC(l[,c("close")],n = .x)
-      for (i in which(is.na(roc))) {
-        roc[i + 1] <- diff(log(l[,c("close")]),i)[i + 1]
-      }
-      roc[1] <- 0
-      return(roc)
-    })
-    # momentum
-    mom <- purrr::map(wind[sum(!is.na(l[,"close"])) > wind], env = parent.frame(), function(.x, env){
-      mom <- TTR::momentum(l[,c("close")], n = .x)
-      for (i in which(is.na(mom))) {
-        mom[i + 1] <- diff(l[,c("close")],i)[i + 1]
-      }
-      mom[1] <- 0
-      return(mom)
-    })
-    # create  out object
-    roc <- do.call("cbind", roc)
-    mom <- do.call("cbind", mom)
-    if (verbose == T) print(c(nrow(roc),nrow(mom)))
-    colnames(roc) <- paste("roc", wind, sep = ".")
-    colnames(mom) <- paste("mom", wind, sep = ".")
-    out <- cbind.xts(l, roc, mom)
-  } else out <- l
-  
-  
-  if (verbose == T) print(nrow(out))
-  return(out)
-})
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ROC And Momentum") 
 ```
 </div>
 ### Add Average True Range
@@ -575,21 +387,7 @@ ATR is best used to set a stop loss at the daily low - 1ATR
 ```{r 'Add ATR'}
 # ----------------------- Sat May 05 10:15:47 2018 ------------------------#
 # Average True Range could be useful for setting stop-loss
-Positions_ts %<>% lapply(wind = sort(c(wind,14)), verbose = F, function(l, wind, verbose){
-  if (nrow(l) > max(wind)) message(paste0("Number of observations in", xtsAttributes(l, user = T)," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
-  if (all(!is.na(quantmod::HLC(l))) ) {
-    atrs <- purrr::map(wind[sum(!is.na(l[,"close"])) > wind], env = parent.frame(), function(.x, env){
-      atr <- TTR::ATR(quantmod::HLC(l), n = .x)
-      atr <- na.locf(atr, fromLast = T)
-      names(atr) <- names(atr) %>% paste(.x, sep = ".")
-      return(atr)
-    })
-    if (verbose == T) any(is.na(atrs)) %>% print
-    atrs <- do.call("cbind", atrs)
-    out <- cbind(l,atrs[,c(atrs %>% names %>% grep("atr",.), atrs %>% names %>% grep("trueLow.14",.))])
-  } else out <- l
-  return(out)
-})
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ATR")
 ```
 </div>
 
@@ -600,15 +398,7 @@ Positions_ts %<>% lapply(wind = sort(c(wind,14)), verbose = F, function(l, wind,
 ```{r 'Add SAR'}
 # ----------------------- Sat May 05 10:15:47 2018 ------------------------#
 # Average True Range could be useful for setting stop-loss
-Positions_ts %<>% lapply(verbose = F, function(l, verbose){
-  if (all(!is.na(quantmod::HLC(l))) ) {
-    l <- l[, -grep("sar", names(l), ignore.case = T)]
-    sar <- TTR::SAR(quantmod::HLC(l), accel = c(0.05, 0.2))
-    if (verbose == T) any(is.na(sar)) %>% print
-    out <- cbind(l,sar)
-  } else out <- l
-  return(out)
-})
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add SAR")
 ```
 <strong>Break Above Falling SAR</strong>
 AND [Yesterday's Daily High < Yesterday's Daily Parabolic SAR(0.01,0.2)] 
@@ -617,36 +407,7 @@ AND [Daily High > Daily Parabolic SAR(0.01,0.2)]
 AND [Yesterday's Daily Low > Yesterday's Daily Parabolic SAR(0.01,0.2)] 
 AND [Daily Low < Daily Parabolic SAR(0.01,0.2)]
 ```{r 'Add SAR Indicator'}
-Positions_ts %<>% lapply(verbose = F, function(l, verbose){
-  
-  if (all(!is.na(quantmod::HLC(l))) ) {
-    out <- rollapply(l[,grep("high|low|close|sar", names(l), ignore.case = T)], width = 2, align = "right", by.column = F, env = parent.frame(), function(r, env){
-      if (verbose == T) print(r)
-      # Names of each of the columns
-      sar_nm <- grep("sar", names(r), ignore.case = T)
-      low_nm <- grep("low", names(r), ignore.case = T)[1]
-      high_nm <- grep("high", names(r), ignore.case = T)[1]
-      close_nm <- grep("close", names(r), ignore.case = T)[1]
-      if (verbose == T) print(c(SAR = sar_nm, Low = low_nm, Hi = high_nm, Cl = close_nm))
-      # SAR values
-      p_sar <- as.numeric(r[1,sar_nm])
-      n_sar <- as.numeric(r[2,sar_nm])
-      p_hi <- as.numeric(r[1,high_nm])
-      p_lo <- as.numeric(r[1,low_nm])
-      n_hi <- as.numeric(r[2,high_nm])
-      n_lo <- as.numeric(r[2,low_nm])
-      if (p_hi < p_sar & n_hi > n_sar) {return(-1)
-      }else if (p_lo > p_sar & n_lo < n_sar) {return(1)
-      }else {return(0)} 
-    })
-    out <- na.locf(out, fromLast = T)
-    colnames(out) <- paste0("sar", "_i")
-    if (verbose == T) any(is.na(out)) %>% print
-    out <- cbind(l,out)
-  } else out <- l
-  return(out)
-})
-  
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add SAR Indicator")
 ```
 ```{r 'SAR Tune'}
 sarParam_df <- expand.grid(af = c(seq(.01,.2,.01)), mf = c(5,10,20,50)) %>% mutate(maf = af*mf) %>% select(-mf)
@@ -657,150 +418,15 @@ sarParam_df <- expand.grid(af = c(seq(.01,.2,.01)), mf = c(5,10,20,50)) %>% muta
 <div class="collapse" id="macd">
 
 
-### Add MACD
+### Add MACD Compressed
 
-```{r 'Add MACD'}
-Positions_ts %<>% purrr::map(wind = wind, function(l, wind){
-  if (nrow(l) > max(wind)) {message(paste0("Number of observations in", xtsAttributes(l, user = T)," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))}
-  wind <- wind[sum(!is.na(l[,"close"])) > wind]
-  if (length(wind) < 2) stop("At least two window values must be fewer than the number of observations in the data")
-  
-  if (all(!is.na(quantmod::HLC(l))) ) {
-    macd <- TTR::MACD(quantmod::Cl(l), nFast = wind[1] * 2, nSlow = wind[2], nSig = wind[1], maType = TTR::EMA)
-    macd[,"macd"] %<>%  na.locf(fromLast = T)
-    macd[,"signal"] %<>% na.locf(fromLast = T)
-    macd_dif <- macd[,"macd"] - macd[,"signal"]
-    out <- cbind(l, macd_dif)
-  } else out <- l
-  return(out)
-})
+```{r 'Add MACD Compressed'}
+knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add MACD Compressed")
 ```
 </div>
-## Add Response Variables
 
-```{r 'Input RV Time Periods'}
-# ----------------------- Fri Aug 17 15:23:09 2018 ------------------------#
-# timeperiods can be in Date: duration format, or number of intra-day observations. ie lubridate::duration(1,"weeks") or lubridate::dweeks(1). 
-timeperiods <- c(lubridate::dweeks(1),lubridate::dweeks(2),lubridate::duration(1,"months"))
-```
-
-```{r 'Percent Change'}
-addpChange <- function(d.f,varnm = "close", wind = 5, verbose = F){
-  clos <- d.f[,varnm]
-  v <- verbose
-dopC  <- lapply(wind,function(tp,cl = clos, verbose = v){
-    vout <- sapply(seq_along(cl),win=tp,.cl=cl,.verb=verbose,FUN=function(i,win,.cl,.verb){
-   if(lubridate::is.duration(win)!=T){ 
-    if(i-win < 1){ind <- 1}else {ind <- i-win} # Cases where the lag falls outside the time window
-    if(.verb==T){print(i);print(c(.cl[ind],.cl[i]))}
-   }else if(lubridate::is.duration(win)){
-     if(time(.cl)[i] - win < time(.cl)[1]){ind <- 1}else {ind <- which(abs(time(.cl)-(time(.cl)[i] - win)) == min(abs(time(.cl) - (time(.cl)[i] - win))))[1]} # Cases where the lag falls outside the time window
-      if(.verb==T){print(time(.cl)[i])}
-   }
-    out <- (.cl[[ind]]-.cl[[i]])/.cl[[ind]]
-    if(is.na(out)){out <- 0}
-    return(out)
-  })
-})
-
-  
- if(is.duration(wind)){nm <- paste0("pC",wind %>% str_extract("(?<=\\(\\~)[\\s[:alnum:]\\.]+"))}else{nm <- paste0("pC",wind)}
-nm %<>% make.names
-  out <- cbind(d.f,do.call("cbind",dopC))
-  names(out)[(dim(out)[2]-(length(dopC)-1)):dim(out)[2]] <- nm
-  return(out)
-}
-# ----------------------- Fri Aug 17 15:53:03 2018 ------------------------#
-# For Testing
-cl <- Positions_ts$GOOG$close
-wind <- timeperiods[1]
-verbose <- F
-addpChange(Positions_ts[[1]],varnm = "close",wind = timeperiods,verbose=F) %>% as.data.frame
-
-```
-
-```{r 'Standard Deviation'}
-sDxts <- function(cl,wind = 5,verbose=F){
-  vout <- sapply(seq_along(cl),wind=wind,cl=cl,verbose=verbose,FUN=function(i, wind, cl, verbose){
-    if(lubridate::is.duration(wind)!=T){
-      if(i-wind < 1){ind <- 1}else {ind <- i-wind}
-      if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
-    }else if(lubridate::is.duration(wind)){
-      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
-      if(verbose==T){time(cl)[i]}
-    }
-  cl %<>% scale
-  out <- sd(cl[c(seq(i,ind))],na.rm = T)
-  if(is.na(out)){out <- 0}
-return(out)
-  })
-}
-# test <- sd.xts(cl,wind,F)
-```
-
-```{r 'Percent Rise'}
-pRise <- function(cl,wind,verbose=F){
-  vout <- sapply(seq_along(cl),wind=wind,cl=cl,verbose=verbose,FUN=function(i,wind,cl,verbose){
-    if(i==1){return(0)} # Account for a single day that will error diff
-    if(lubridate::is.duration(wind)!=T){
-      if(i-wind < 1){ind <- 1}else {ind <- i-wind}
-      if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
-    }else if(lubridate::is.duration(wind)){
-      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
-      if(verbose==T){time(cl)[i]}
-    }
-   out <- cl[c(seq(i,ind))] %>% rev() %>% diff() %>% sign() %>% table() %>% prop.table() %>% .["1"]
-   if(is.na(out)){return(0)} # Account for no rise
-    return(out)
-   # Get the values in the window. Because seq is in reverse, the values need to flipped with rev. Take the diff, get the sign of the difference, table that, then give proportions, assign the proportion associated with positive gains.
-   
-  })
-}
-#test <- pRise(cl,wind,verbose=F)
-```
-
-```{r 'addRV Meta Function'}
-# ----------------------- Sat Aug 18 07:44:32 2018 ------------------------#
-# This Function accepts an input of the types of RVs and adds them to the list of timeseries rather than running each chunk individually.
-
-test <- lapply(Positions_ts,rv = c("pChange","pRise","sd"), tp = timeperiods, FUN = function(l,rv,tp, verbose = F){
-vout <- list()
-# ----------------------- Sat Aug 18 07:12:17 2018 ------------------------#
-# percent Change
-if(any(rv == "pChange")){
-vout$pChanges <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
-    pChange(l$close,x,verbose)
-  })
-}
-# ----------------------- Sat Aug 18 07:12:02 2018 ------------------------#
-# percent Rise
-if(any(rv == "pRise")){
-vout$pRise <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
-    pRise(l$close,x,verbose)
-  })
-}
-# ----------------------- Sat Aug 18 07:13:12 2018 ------------------------#
-# Standard Deviation
-  if(any(rv == "sd")){
-vout$sd <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
-    sDxts(l$close,x,verbose)
-  })
-}
-# Label all columns
-vout <- lapply(seq_along(vout),tp = tp, nms = names(vout),vout=vout, FUN = function(o,tp,nms,vout){
-  if(lubridate::is.duration(tp)){tp <- timeperiods %>% as.character() %>% stringr::str_extract("((?<=\\~)[\\.A-Za-z0-9\\s]+)") %>% gsub(" ","",.)}
-  colNames <- sapply(tp,nm = nms[o],FUN = function(x,nm){
-    paste0(nm,".", x)
-  })
-  colnames(vout[[o]]) <- colNames
-  return(vout[[o]])
-})
-rvs <- do.call("cbind",vout)
-l <- cbind(l,rvs)
-})
-```
-
-# Add Response Variable Trailing Stop Loss
+# Response Variables
+## Test Trailing Stop Loss
 ```{r 'Test Trailing Stop Loss Fn'}
 source("Jobs & Scripts/QuantFunctions_TSL.R")
 rstudioapi::jobRunScript("Jobs & Scripts/TestTSL.R",workingDir = getwd(), exportEnv = "R_GlobalEnv")
@@ -810,71 +436,185 @@ rstudioapi::jobRunScript("Jobs & Scripts/AddTSLRV.R",workingDir = getwd(), expor
 ```
 
 
-```{r 'Old RV', eval=F}
-# ----------------------- Sun May 19 08:33:01 2019 ------------------------#
-# Doesnt work properly, error in findPeaks
 
-list(function(x){.1}, .5, function(x){})
-Positions_ts %<>% lapply(wind = wind, verbose = T, function(l, wind, verbose){
-  dat <- cbind(quantmod::OHLC(l),l[,"sar_i"])
-  cl_nm <- grep("close", names(dat), ignore.case = T)
-  sa_nm <- grep("sar", names(dat), ignore.case = T)
-  if (all(!is.na(dat))) {
-    rvs <- purrr::map(wind, env = parent.frame(), function(.x, env){
-      if (nrow(dat) <= .x) .x <- {nrow(dat) - 1}
-      ras <- zoo::rollapplyr(dat[,c(cl_nm, sa_nm)], width = .x, align = "left", by.column = F, env = parent.frame(), na.pad = T, partial = T, function(r, env){
-        if (!is.na(which(r[, 2] == -1)[1])) s <- which(r[, 2] == -1)[1] else s <- numeric(0)
-        if(verbose == T) print(s)
-        p <- quantmod::findPeaks(r[, 1], thresh = sd(r[1]))
-        v <- quantmod::findValleys(r[, 1], thresh = sd(r[1]))
-        if (length(s) != 0) i <- s[1] else if (length(p) != 0) i <- p[1] else if (length(v) != 0) i <- v[1] else i <- .x
-        if(verbose == T) print(i)
-        out <- {coredata(r[i, 1]) - coredata(r[1, 1])}
-        if(verbose == T) print(out)
-        return(out)
-      })
-      # Fill the NA at the end
-      na_ind <- which(is.na(ras)) 
-      n <- min(na_ind)
-      end <- max(na_ind)
-      while (n < end) {
-        # Use the SAR as the Sell point first, Which returns index within n:na_ind, so to get the actual index it needs to be used as a subset of n:end
-        if (!is.na(which(dat[n:end, sa_nm] == -1)[1])) s <- c(n:end)[which(dat[n:end, sa_nm] == -1)[1]] else s <- numeric(0)
-        p <- c(n:end)[quantmod::findPeaks(dat[n:end, cl_nm], thresh = sd(dat[n:end, cl_nm]))]
-        v <- c(n:end)[quantmod::findValleys(dat[n:end, cl_nm], thresh = sd(dat[n:end, cl_nm]))]
-        if(verbose == T) print(c(s=s,p=p,v=v))
-        if (length(s) != 0) i <- s[1] else if (length(p) != 0) i <- p[1] else if (length(v) != 0) i <- v[1] else i <- end
-        if(verbose == T) print(i)
-        ras[n] <- {coredata(dat[i, cl_nm]) - coredata(dat[n, cl_nm])}
-        n <- n + 1
-      }
-      ras[n] <- 0
-      # END
-      return(ras)
-    })
-  out <- do.call("cbind", rvs)
-  colnames(out) <- paste0(names(out), ".","_rv")
-  l <- l[,- grep("rv$",names(l))]
-  out <- cbind(l, out)
-  }else out <- l
-  return(out)
+```{r 'Save or Load Data'}
+load(file = list.files() %>% .[stringr::str_which(., "gain")])
+SL <- rstudioapi::document_position(443,1)
+if (tibble::is_tibble(Positions_ts[[1]])) tsrange <- Positions_ts[[1]] %>% tibbletime::get_index_col() %>% range else Positions_ts[[1]] %>% time %>% range
+save(Positions_ts, file = paste0("Positions_ts",paste(tsrange,collapse = "_"),".Rdata"))
+load(file = list.files()[stringr::str_which(list.files(), "Positions_ts\\d")])
+if (tibble::is_tibble(Positions_ts[[1]])) tsrange <- Positions_new[[1]] %>% tibbletime::get_index_col() %>% range else Positions_new[[1]] %>% time %>% range
+save(Positions_new, file = paste0("Positions_new",paste(tsrange,collapse = "_"),".Rdata"))
+load(file = list.files()[stringr::str_which(list.files(), "Positions_new")])
+save(Positions_tsl, file = "Positions_tsl.Rdata")
+load(file = "Positions_tsl.Rdata")
+```
+```{r, eval=F}
+#Remove extraneous macd that snuck in and has been effing up models
+Positions_ts <- purrr::map(Positions_ts, function(.x){
+  .x[,-stringr::str_which(colnames(.x), "^macd$")]
+})
+#Remove chg and change
+Positions_ts <- purrr::map(Positions_ts, function(.x){
+  .x[,-stringr::str_which(colnames(.x), "^chg$|^change$")]
 })
 
+# Fix irregular column names from AddRVstoData function, may be used again if not fixed
+Positions_ts <- purrr::map(Positions_ts, function(.x){
+  Time.ind <- which(purrr::map(.x,class) %>% unlist == "Date")[2]
+  cl.nm <- seq(Time.ind, ncol(.x) - 1)
+  nms <- names(.x)[cl.nm]
+  out <- .x[, - Time.ind]
+  names(out)[cl.nm] <- nms
+  return(out)
+} )
 ```
 
-```{r 'Save Data'}
-save(Positions_ts, file = paste0("Positions_ts",Positions_ts[[1]] %>% time %>% min,"_",Positions_ts[[1]] %>% time %>% max,".Rdata"))
+
+# Generic Fn to add all Signals and Response Variables
+
+```{r 'Generic Add Signals'}
+# First change Positions to object entitled dat
+dat <- Positions_ts
+# Set the signal windows desired
+wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
+# Save the file
+save(dat, wind, file = "dat.Rdata")
+rstudioapi::jobRunScript("Jobs & Scripts/AddAllDVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+# Once Completed return the variable to it's original name and save it
+dat %>% assign("Positions_ts", . , envir = globalenv()) 
+#Save
+rstudioapi::setCursorPosition(SL)
+```
+
+```{r 'Add RVs to Data'}
+dat <- Positions_ts
+# Set the signal windows desired
+wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
+# Save the file
+TSLvars <- list(
+  tsla = function(x){
+  cl_cl <- stringr::str_which(colnames(x),"close")
+  sd(x[,cl_cl, drop = T]) * .5},
+  tsla = function(x){
+  cl_cl <- stringr::str_which(colnames(x),"close")
+  sd(x[,cl_cl, drop = T])},
+  tsla = function(x){
+  cl_cl <- stringr::str_which(colnames(x),"close")
+  sd(x[,cl_cl, drop = T]) * 2},
+  retro = c(n = wind[1], hilop = .9),
+  retro = c(n = wind[2], hilop = .9),
+  retro = c(n = wind[3], hilop = .9),
+  retro = c(n = wind[4], hilop = .9))
+TSLvars %<>% append(seq(.04,.24,.02) %>% setNames(nm = rep("tslp",length(.))) %>% as.list)
+add <- F
+
+save(dat, wind, TSLvars, add, file = "dat.Rdata")
+rstudioapi::jobRunScript("Jobs & Scripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+# Once Completed return the variable to it's original name and save it
+dat %>% assign("Positions_ts", . , envir = globalenv()) 
+# Save
+rstudioapi::setCursorPosition(SL)
+```
+
+```{r 'Add Gain Mix Period RVs'}
+dat <- Positions_ts
+save(dat, file = "dat.Rdata")
+rstudioapi::jobRunScript(path = "Jobs & Scripts/GainMixPeriod.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+# Save
+Positions_ts <- dat
+rstudioapi::setCursorPosition(SL)
+
+```
+
+
+```{r 'Function to Optimize Returns'}
+pct <- seq(.05, .25, .01)
+names(pct) <- seq(.05, .25, .01)
+dat <- Positions_ts
+save(dat, pct, file = "dat.Rdata")
+rstudioapi::jobRunScript(path = "Jobs & Scripts/MapReturns.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+
+Positions_ret <- dat
+```
+```{r 'View Optimized Returns'}
+tsl_performance <- purrr::map_depth(Positions_ret, .depth = 3, .f = function(.x) {
+  out <- c(Returns = attr(.x, "Returns"),Cum.Returns = attr(.x, "Cum.Returns"))
+  return(out)
+}) %>% purrr::map_depth(.depth = 2, .f = function(.x){
+  .x <- subset(.x, subset = purrr::map(.x,length) %>% unlist != 0)
+  if(length(.x) == 0) return(NULL)
+  d <- do.call("rbind",.x)
+  if (stringr::str_detect(colnames(d),"Returns") %>% any){
+  ind <- which.max(d[,"Returns", drop = T])
+  pct <- rownames(d)[ind]
+  returns <- d[ind,"Returns", drop = T]
+  } else returns <- 0
+  if (stringr::str_detect(colnames(d),"Cum.Returns") %>% any){
+  ind <- which.max(d[,"Cum.Returns", drop = T])
+  pct <- rownames(d)[ind]
+  cum.returns <- d[ind,"Cum.Returns", drop = T]} else cum.returns <- 0
+  out <- c(pct = pct, Returns = returns, Cum.Returns = cum.returns)
+}) %>% purrr::map(function(.x){
+  d <- do.call("rbind",.x) 
+  rd <- rownames(d) 
+  d %<>% as.data.frame() 
+  d %<>%  mutate_all(funs(as.numeric(as.character(.))))
+  row.names(d) <- rd
+  d %<>% tibble::rownames_to_column()
+  if (identical(d %>% arrange(desc(Returns)) %>% .[1,2],d %>% arrange(desc(Cum.Returns)) %>% .[1,2])){
+  out <- d %>% arrange(desc(Returns)) %>% .[1,]
+  } else {
+      out <-  rbind.data.frame(d %>% arrange(desc(Returns)) %>% .[1,],d %>% arrange(desc(Cum.Returns)) %>% .[1,])
+  }
+  return(out)
+ })
+Positions_tsl <- tsl_performance
+
+save(Positions_tsl, file = "Positions_tsl.Rdata")
+```
+
+```{r 'Add Benchmarks'}
+best_tsl <- Positions_tsl
+dat <- Positions_ts
+save(dat, best_tsl, file = "dat.Rdata")
+rstudioapi::jobRunScript(path = "Jobs & Scripts/AddBenchmarks.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+```
+
+```{r 'Test Ephemeris Correlation'}
+Years <- read_csv("Years.csv")[c("Date", "SUN.SI", "MOON.SI", "MERCURY.SI","VENUS.SI", "MARS.SI")]
+
+```
+
+
+```{r 'Machine Learning Algorithm Training'}
+# Recommended to clear environment and then load data so as to free up all RAM
+rm(list = ls())
+load(file = "Positions_ts2014-05-08_2019-05-07.Rdata")
+load(file = "Positions_tsl.Rdata")
+methodList <- c("xgbTree", "nnet", "pcaNNet") # Add method names. See http://topepo.github.io/caret/available-models.html for details
+    # If first run, use tunelength. If final or subsequent runs with a refined tuning grid, provide tuneGrids in the lapply call (not in it's function)
+
+dat <- Positions_ts # Pass the list of timeseries objects for which algorithms will trained
+train_rvs <- c("Gain_type","Mix_type")
+best_tsl <- Positions_tsl
+save(methodList, dat, train_rvs, best_tsl, file = "dat_dt.Rdata")
+# ----------------------- Mon Jun 03 06:12:02 2019 ------------------------#
+# Important to filter all none profitable signals from the type prediction
+rstudioapi::jobRunScript(path = "Jobs & Scripts/TrainModels.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+
+```
+
+
+```{r 'Examine Ensemble Models'}
+model_nms <- list.files("MdlBkp/", full.names = T, include.dirs = T)
+load(model_nms[6])
 ```
 
 
 
-
-
-```{r 'Random Forest Variable Importance Filter and xgbTree Prediction'}
-rstudioapi::jobRunScript(path = "Jobs & Scripts/RFAttrFilterandxgBoost.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
-```
 ```{r 'Examine Models'}
-save(Positions_dt, file = paste0("xgBoost",Positions_ts$GOOG %>% time %>% min,"_",Positions_ts$GOOG %>% time %>% max,".Rdata"))
+save(dat_dt, file = paste0("xgBoost",Positions_ts$GOOG %>% time %>% min,"_",Positions_ts$GOOG %>% time %>% max,".Rdata"))
 Model_Perf <- parallel::mclapply(Positions_dt, function(dt){
   if(is.null(dt)) return(NULL)
   names(dt) <-  purrr::map(dt, purrr::pluck, "terms", 2) %>% as.character()
@@ -903,16 +643,70 @@ Positions_dt %<>% purrr::map(function(l){
 ```
 
 
-# Add All Variables to an OOT Dataset
-```{r 'Add Vars to OOT'}
-rstudioapi::jobRunScript("Jobs & Scripts/AddAllVariablestoNewData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+
+
+# Test Out of Time
+## Create OOT & Add Signals 
+```{r 'Gather new Data from Portfolio Sheet and add Signals'}
+googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
+gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
+close <- googlesheets::gs_read(gsPositions, ws = 'Holdings')
+high <- googlesheets::gs_read(gsPositions, ws = '(Hi)')
+low <- googlesheets::gs_read(gsPositions, ws = '(Lo)')
+close$Date %<>% lubridate::mdy_hms() %>% format("%m/%d/%Y") %>% lubridate::mdy()
+high$Date %<>% lubridate::mdy_hms() %>% format("%m/%d/%Y") %>% lubridate::mdy()
+low$Date %<>% lubridate::mdy_hms() %>% format("%m/%d/%Y") %>% lubridate::mdy()
+Positions_hlc <- left_join(close, high, by = "Date", suffix = c(".close",".high")) %>% left_join(low, by = "Date")
+toNum <- function(x){
+  x %>% stringr::str_replace_all("\\$|\\,","") %>% as.numeric
+}
+tickers <- names(close)[-1]
+names(tickers) <- names(close)[-1]
+Positions_new <-  purrr::map(.x = tickers, dat = Positions_hlc %>% filter(Date > {(time(Positions_ts_gain[[1]]) %>% max) - 200}), toNum = toNum, .f = function(.x, dat, toNum){
+  ind <- c(paste0(.x,".close"), paste0(.x, ".high"), .x)
+  xts.dat <- dat[, ind] %>% mutate_all(funs(toNum))
+  out <- xts(xts.dat, order.by = dat[["Date"]])
+  xtsAttributes(out) <- list(Sym = .x)
+  colnames(out) <- c("close","high","low")
+  return(out)
+})
+#Fill dates for proper windowing
+Positions_new %<>% lapply(function(l){ # Actual Time for measuring exact weeks, quarters and approx. months
+  out <- xts(order.by = seq(min(time(l)), max(time(l)), by = "1 days")) %>% merge.xts(l) %>% na.locf()
+  
+})
+rm(Positions_hlc)
+dat <- Positions_new
+# Set the signal windows desired
+wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
+# Save the file
+save(dat, wind, TSLvars, file = "dat.Rdata")
+rstudioapi::jobRunScript("Jobs & Scripts/AddAllDVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+Positions_new <- dat
+save("Positions_new", file = paste0("Positions_new.Rdata"))
+```
+```{r 'Add RVs to New Data'}
+# After the previous completes
+save(dat, wind, TSLvars, file = "dat.Rdata") #TSLvars from Chunk 35: Add RVs to Data
+rstudioapi::jobRunScript("Jobs & Scripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+Positions_new <- dat
+save("Positions_new", file = paste0("Positions_new.Rdata"))
+```
+
+```{r 'Test ML Ensemble Models with OOT Data'}
+# Supply if OOT data is later than training data, if OOT data is older than training data do not supply
+OOTbegin <- lubridate::ymd(Positions_ts[[1]] %>% tibbletime::get_index_col() %>% max)
+dat <- Positions_new
+best_tsl <- Positions_tsl
+save(dat, best_tsl, OOTbegin, file = "dat.Rdata")
+rstudioapi::jobRunScript("Jobs & Scripts/ApplyModelstoNewData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+Positions_strat <- dat
 ```
 
 
 
 
 
-# The closing price column is required. 
 <h3>Arguments</h3>
   <table class="R argblock">
     <tbody>
@@ -1611,6 +1405,59 @@ Positions_ts %>% lapply(tp = timeperiods,verbose = F,FUN = function(l,tp,verbose
 ```
 
 #Appendix
+## Previous method for creating RV's
+```{r 'Old RV', eval=F}
+# ----------------------- Sun May 19 08:33:01 2019 ------------------------#
+# Doesnt work properly, error in findPeaks
+
+list(function(x){.1}, .5, function(x){})
+Positions_ts %<>% lapply(wind = wind, verbose = T, function(l, wind, verbose){
+  dat <- cbind(quantmod::OHLC(l),l[,"sar_i"])
+  cl_nm <- grep("close", names(dat), ignore.case = T)
+  sa_nm <- grep("sar", names(dat), ignore.case = T)
+  if (all(!is.na(dat))) {
+    rvs <- purrr::map(wind, env = parent.frame(), function(.x, env){
+      if (nrow(dat) <= .x) .x <- {nrow(dat) - 1}
+      ras <- zoo::rollapplyr(dat[,c(cl_nm, sa_nm)], width = .x, align = "left", by.column = F, env = parent.frame(), na.pad = T, partial = T, function(r, env){
+        if (!is.na(which(r[, 2] == -1)[1])) s <- which(r[, 2] == -1)[1] else s <- numeric(0)
+        if(verbose == T) print(s)
+        p <- quantmod::findPeaks(r[, 1], thresh = sd(r[1]))
+        v <- quantmod::findValleys(r[, 1], thresh = sd(r[1]))
+        if (length(s) != 0) i <- s[1] else if (length(p) != 0) i <- p[1] else if (length(v) != 0) i <- v[1] else i <- .x
+        if(verbose == T) print(i)
+        out <- {coredata(r[i, 1]) - coredata(r[1, 1])}
+        if(verbose == T) print(out)
+        return(out)
+      })
+      # Fill the NA at the end
+      na_ind <- which(is.na(ras)) 
+      n <- min(na_ind)
+      end <- max(na_ind)
+      while (n < end) {
+        # Use the SAR as the Sell point first, Which returns index within n:na_ind, so to get the actual index it needs to be used as a subset of n:end
+        if (!is.na(which(dat[n:end, sa_nm] == -1)[1])) s <- c(n:end)[which(dat[n:end, sa_nm] == -1)[1]] else s <- numeric(0)
+        p <- c(n:end)[quantmod::findPeaks(dat[n:end, cl_nm], thresh = sd(dat[n:end, cl_nm]))]
+        v <- c(n:end)[quantmod::findValleys(dat[n:end, cl_nm], thresh = sd(dat[n:end, cl_nm]))]
+        if(verbose == T) print(c(s=s,p=p,v=v))
+        if (length(s) != 0) i <- s[1] else if (length(p) != 0) i <- p[1] else if (length(v) != 0) i <- v[1] else i <- end
+        if(verbose == T) print(i)
+        ras[n] <- {coredata(dat[i, cl_nm]) - coredata(dat[n, cl_nm])}
+        n <- n + 1
+      }
+      ras[n] <- 0
+      # END
+      return(ras)
+    })
+  out <- do.call("cbind", rvs)
+  colnames(out) <- paste0(names(out), ".","_rv")
+  l <- l[,- grep("rv$",names(l))]
+  out <- cbind(l, out)
+  }else out <- l
+  return(out)
+})
+
+```
+
 ## ADX & SAR Algorithm from Finance for Freelancers
 ```{r 'Combine SAR & ADX as Indicator'}
 ADXSAR.i <- function(adx.ind=adx.i,sar.ind=sar.i,wind=3) { # Both indicators and a window
@@ -1670,6 +1517,137 @@ purrr::map2(.x = TS.adxsar, T)
 {TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]} %>% length
 TS.adxsar$GOOG %>% filter(Action=="buy") %>% select(time,PR,sar,ADXv,DX,Diff,sar.i) %>% cbind(G.L={TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]}) %>% lm(G.L ~ ., data=.) %>% summary
 
+```
+
+
+<p>The response variables of interest currently are:
+<ul>
+<li> the percent change for varying periods of time </li>
+<li> the percent of days of the time period in which gains were recognized</li>
+<li> the sd for the same time periods </li>
+</ul>
+</p>
+
+```{r 'Input RV Time Periods'}
+# ----------------------- Fri Aug 17 15:23:09 2018 ------------------------#
+# timeperiods can be in Date: duration format, or number of intra-day observations. ie lubridate::duration(1,"weeks") or lubridate::dweeks(1). 
+timeperiods <- c(lubridate::dweeks(1),lubridate::dweeks(2),lubridate::duration(1,"months"))
+```
+
+```{r 'Percent Change'}
+addpChange <- function(d.f,varnm = "close", wind = 5, verbose = F){
+  clos <- d.f[,varnm]
+  v <- verbose
+dopC  <- lapply(wind,function(tp,cl = clos, verbose = v){
+    vout <- sapply(seq_along(cl),win=tp,.cl=cl,.verb=verbose,FUN=function(i,win,.cl,.verb){
+   if(lubridate::is.duration(win)!=T){ 
+    if(i-win < 1){ind <- 1}else {ind <- i-win} # Cases where the lag falls outside the time window
+    if(.verb==T){print(i);print(c(.cl[ind],.cl[i]))}
+   }else if(lubridate::is.duration(win)){
+     if(time(.cl)[i] - win < time(.cl)[1]){ind <- 1}else {ind <- which(abs(time(.cl)-(time(.cl)[i] - win)) == min(abs(time(.cl) - (time(.cl)[i] - win))))[1]} # Cases where the lag falls outside the time window
+      if(.verb==T){print(time(.cl)[i])}
+   }
+    out <- (.cl[[ind]]-.cl[[i]])/.cl[[ind]]
+    if(is.na(out)){out <- 0}
+    return(out)
+  })
+})
+
+  
+ if(is.duration(wind)){nm <- paste0("pC",wind %>% str_extract("(?<=\\(\\~)[\\s[:alnum:]\\.]+"))}else{nm <- paste0("pC",wind)}
+nm %<>% make.names
+  out <- cbind(d.f,do.call("cbind",dopC))
+  names(out)[(dim(out)[2]-(length(dopC)-1)):dim(out)[2]] <- nm
+  return(out)
+}
+# ----------------------- Fri Aug 17 15:53:03 2018 ------------------------#
+# For Testing
+cl <- Positions_ts$GOOG$close
+wind <- timeperiods[1]
+verbose <- F
+addpChange(Positions_ts[[1]],varnm = "close",wind = timeperiods,verbose=F) %>% as.data.frame
+
+```
+
+```{r 'Standard Deviation'}
+sDxts <- function(cl,wind = 5,verbose=F){
+  vout <- sapply(seq_along(cl),wind=wind,cl=cl,verbose=verbose,FUN=function(i, wind, cl, verbose){
+    if(lubridate::is.duration(wind)!=T){
+      if(i-wind < 1){ind <- 1}else {ind <- i-wind}
+      if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
+    }else if(lubridate::is.duration(wind)){
+      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
+      if(verbose==T){time(cl)[i]}
+    }
+  cl %<>% scale
+  out <- sd(cl[c(seq(i,ind))],na.rm = T)
+  if(is.na(out)){out <- 0}
+return(out)
+  })
+}
+# test <- sd.xts(cl,wind,F)
+```
+
+```{r 'Percent Rise'}
+pRise <- function(cl,wind,verbose=F){
+  vout <- sapply(seq_along(cl),wind=wind,cl=cl,verbose=verbose,FUN=function(i,wind,cl,verbose){
+    if(i==1){return(0)} # Account for a single day that will error diff
+    if(lubridate::is.duration(wind)!=T){
+      if(i-wind < 1){ind <- 1}else {ind <- i-wind}
+      if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
+    }else if(lubridate::is.duration(wind)){
+      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
+      if(verbose==T){time(cl)[i]}
+    }
+   out <- cl[c(seq(i,ind))] %>% rev() %>% diff() %>% sign() %>% table() %>% prop.table() %>% .["1"]
+   if(is.na(out)){return(0)} # Account for no rise
+    return(out)
+   # Get the values in the window. Because seq is in reverse, the values need to flipped with rev. Take the diff, get the sign of the difference, table that, then give proportions, assign the proportion associated with positive gains.
+   
+  })
+}
+#test <- pRise(cl,wind,verbose=F)
+```
+
+```{r 'addRV Meta Function'}
+# ----------------------- Sat Aug 18 07:44:32 2018 ------------------------#
+# This Function accepts an input of the types of RVs and adds them to the list of timeseries rather than running each chunk individually.
+
+test <- lapply(Positions_ts,rv = c("pChange","pRise","sd"), tp = timeperiods, FUN = function(l,rv,tp, verbose = F){
+vout <- list()
+# ----------------------- Sat Aug 18 07:12:17 2018 ------------------------#
+# percent Change
+if(any(rv == "pChange")){
+vout$pChanges <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    pChange(l$close,x,verbose)
+  })
+}
+# ----------------------- Sat Aug 18 07:12:02 2018 ------------------------#
+# percent Rise
+if(any(rv == "pRise")){
+vout$pRise <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    pRise(l$close,x,verbose)
+  })
+}
+# ----------------------- Sat Aug 18 07:13:12 2018 ------------------------#
+# Standard Deviation
+  if(any(rv == "sd")){
+vout$sd <- sapply(tp,l=l,verbose=verbose,FUN = function(x,l,verbose){
+    sDxts(l$close,x,verbose)
+  })
+}
+# Label all columns
+vout <- lapply(seq_along(vout),tp = tp, nms = names(vout),vout=vout, FUN = function(o,tp,nms,vout){
+  if(lubridate::is.duration(tp)){tp <- timeperiods %>% as.character() %>% stringr::str_extract("((?<=\\~)[\\.A-Za-z0-9\\s]+)") %>% gsub(" ","",.)}
+  colNames <- sapply(tp,nm = nms[o],FUN = function(x,nm){
+    paste0(nm,".", x)
+  })
+  colnames(vout[[o]]) <- colNames
+  return(vout[[o]])
+})
+rvs <- do.call("cbind",vout)
+l <- cbind(l,rvs)
+})
 ```
 
 
