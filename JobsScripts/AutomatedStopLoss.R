@@ -50,10 +50,6 @@ if (nrow(Orders_unfilled) > 0) {
       update_nms <- names(Orders_filled)[names(Orders_filled) %in% names(Orders_unfilled)][c(4:9, 14:15, 22)]
       filled_sales <- Orders_filled[i,] %>% left_join(Orders_unfilled[i,] %>% select(- update_nms), by = merge_by_nms) %>% select(Platform, everything()) %>% mutate(qty_remain = filled_qty)
       filled_sales[, addtl_cols] <- Orders_unfilled[i,addtl_cols]
-      # Get the index of the updated order in the Positions_tsl
-      Ptsl_ind <- which(Positions_tsl[[Orders_filled$symbol[i]]][["orders"]]$id == Orders_filled$id[i])
-      # Update the matching columns in Positions_tsl order tracking
-      Positions_tsl[[Orders_filled$symbol[i]]][["orders"]][Ptsl_ind, ] <- filled_sales
       # Replace the row in Google Sheets
       googlesheets::gs_edit_cells(gs, ws = "Orders", input = filled_sales, anchor = paste0("A",which(Orders$id == Orders_filled[i, "id"]) + 1),  col_names = F)
     }
@@ -71,10 +67,6 @@ if (nrow(Orders_unfilled) > 0) {
       update_nms <- names(Orders_filled)[names(Orders_filled) %in% names(Orders_unfilled)][c(4:9, 14:15, 22)]
       filled_sales <- Orders_filled[i,] %>% left_join(Orders_unfilled[i,] %>% select(- update_nms), by = merge_by_nms) %>% select(Platform, everything() )%>% mutate(qty_remain = 0)
       filled_sales[, addtl_cols] <- Orders_unfilled[i,addtl_cols]
-      # Get the index of the updated order in the Positions_tsl
-      Ptsl_ind <- which(Positions_tsl[[Orders_filled$symbol[i]]][["orders"]]$id == Orders_filled$id[i])
-      # Update the matching columns in Positions_tsl order tracking
-      Positions_tsl[[Orders_filled$symbol[i]]][["orders"]][Ptsl_ind, ] <- filled_sales
       # Replace the row in Google Sheets
       googlesheets::gs_edit_cells(gs, ws = "Orders", input = filled_sales, anchor = paste0("A",which(Orders$id == Orders_filled[i, "id"]) + 1),  col_names = F)
     }
@@ -214,8 +206,7 @@ for (l in seq_along(sell_updates)) {
 
 
 recent_prices <- apply(open_positions, 1, function(r){
-  by_min <- AlpacaforR::get_bars(r[["symbol"]], from = lubridate::today(), timeframe = "minute")
-  by_min %<>% dplyr::select(d,o,h,l,c,v) %>% dplyr::rename(Time = "d", open = "o", high = "h", low = "l", close = "c", volume = "v")
+  by_min <- get_bars(r[["symbol"]], from = lubridate::today(), timeframe = "minute")[[1]]
     # Add change percent
     by_min[["changePercent"]] <- c(0,zoo::rollapply(by_min, width = 2, function(r){
       (as.numeric(r[2, "close", drop = T]) - as.numeric(r[1, "close", drop = T])) / as.numeric(r[1, "close", drop = T])
@@ -263,9 +254,7 @@ recent_prices <- apply(open_positions, 1, function(r){
 # Map over recent prices, the open positions, the Positions_tsl tracking list, open shares, and all orders
 # @return The modified Position_tsl 
 # for Debugging
-pmap_test <- list(.s = set_tsl$symbol[i], .c_a = set_tsl$created_at[i], .q = set_tsl$qty_remain[i], .p = set_tsl$filled_avg_price[i], .tsl = set_tsl$TSL[i], .live = set_tsl$live[i], r_p = recent_prices, tslv = params$TSLvars)
-pmap_test %>% purrr::imap(function(.x, .y){
-   assign(.y,value = .x, envir = .GlobalEnv)})
+list(.r_p = recent_prices[names(open_shares)], .o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .Ptsl = Positions_ts[names(open_shares)]) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
 
 purrr::pmap(list(.r_p = recent_prices[names(open_shares)], .o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .Ptsl = Positions_tsl[names(open_shares)]), .f = function(.r_p, .o_p, .Ptsl){
   
