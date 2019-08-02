@@ -16,15 +16,16 @@ output:
     toc_float: true
 ---
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message=FALSE,warning=FALSE,cache=TRUE, fig.align='center', fig.height=3.5, fig.width=5, tidy=TRUE, tidy.opts=list(width.cutoff=80))
+knitr::opts_chunk$set(echo = TRUE, message=T,warning=FALSE,cache=TRUE, fig.align='center', fig.height=3.5, fig.width=5, tidy=TRUE, tidy.opts=list(width.cutoff=80))
 # rmarkdown::html_dependency_jquery()
 # rmarkdown::html_dependency_bootstrap("spacelab")
 # rmarkdown::html_dependency_jqueryui()
 set.seed(1)
 options(scipen=12)
-HDA::startPkgs(c("tidyverse","dplyr","htmltools","magrittr","QuantTools","quantmod","lubridate", "rlang"))
-# Monitoring ticker data can be accomplished through the IEX API. The following R Script has built in API calls for R.
-#source("iex.R")
+HDA::startPkgs(c("tidyverse","magrittr","lubridate", "AlpacaforR"))
+# ----------------------- Fri Jul 19 09:03:50 2019 ------------------------#
+#Functions
+source("JobsScripts/parameters.R")
 ```
 
 # Objectives
@@ -73,7 +74,6 @@ Positions <- googlesheets::gs_read(gsPositions,ws=1)
 Positions_v <- Positions[-c(1,2),1,drop=T] # Call for vector of positions
 #Dad.positions_v <- Dad.positions[-c(1),1,drop=T]
 ```
-  
 
 
 <a href="https://iextrading.com/developer/docs/#chart" target="_blank">IEX Documentation: Charts</a>
@@ -127,6 +127,121 @@ fin_stats <- cbind(quotes,stats)
 Positions_ts <- iex_batch_req(tSymbols = Positions_v, range = "5y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
 #Dad.positions_ts <- iex_batch_req(tSymbols = Dad.positions_v, range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T]) 
 ```
+```{r 'Update Data from Alpaca'}
+get_positions <- function (ticker = NULL, live = FALSE) 
+{
+  url = get_url(live)
+  headers = get_headers(live)
+  positions = httr::GET(url = paste0(url, "/v1/positions"), 
+    headers)
+  positions = response_text_clean(positions)
+  if (length(positions) == 0) 
+    cat("No positions are open at this time.")
+  else if (is.null(ticker)) {
+    positions[, c(5:6, 8:ncol(positions))] %<>% map_dfc(as.numeric)
+    return(positions)
+  }
+  else {
+    positions[, c(5:6, 8:ncol(positions))] %<>% map_dfc(as.numeric)
+    positions <- subset(positions, symbol == ticker)
+    return(positions)
+  }
+}
+ticker <- r$symbol
+get_bars <- function(ticker, from = Sys.Date() - 6, to = Sys.Date(), timeframe = "minute", 
+  limit = NULL) 
+{
+
+  if (stringr::str_detect(timeframe, stringr::regex("D|d|days?", ignore_case = T))) {
+    timeframe <- "1D"
+  } else if (stringr::str_detect(timeframe, stringr::regex("M|mins?|minutes?", ignore_case = T))) {
+    digit <- ifelse(!is.na(stringr::str_extract(timeframe, "^\\d+")), stringr::str_extract(timeframe, "^\\d+"), "1")
+    timeframe <- paste0(digit,"Min")
+  }
+  url = "https://data.alpaca.markets"
+  headers = AlpacaforR::get_headers()
+  if (!is.null(limit)) {
+    if (limit > 1000) {
+      stop("Max limit is 1000!")
+    }
+  }
+  ticker = ifelse(length(ticker) > 1, paste0(ticker, collapse = ","), 
+    ticker)
+  week_dates = AlpacaforR::get_calendar(from, to)$date
+  if (length(week_dates) > 1000) {
+    start <- length(week_dates) - 999
+    week_dates <- week_dates[start:length(week_dates)]
+  }
+  if ((timeframe == "1D" | timeframe == "day") & is.null(limit)) {
+    limit = length(week_dates)
+  } else if (timeframe == "15Min" & is.null(limit)) {
+    limit = 250
+  } else if (timeframe == "5Min" & is.null(limit)) {
+    limit = 500
+  } else if ((timeframe == "1Min" | timeframe == "minute") & is.null(limit)) {
+    limit = 1000
+  }
+  if (!(timeframe == "1D" | timeframe == "day")) {
+    from = paste0(from, stringr::str_extract(format(Sys.time(), 
+      "%Y-%m-%dT%H:%M:%OS%z"), "T.*"))
+    to = paste0(to, stringr::str_extract(format(Sys.time(), 
+      "%Y-%m-%dT%H:%M:%OS%z"), "T.*"))
+  } else {
+    from = paste0(from, "T20:30:00-04:00")
+    to = paste0(to, "T20:30:00-04:00")
+  }
+  bars = httr::GET(url = paste0(url, "/v1/bars/", timeframe, 
+    "?symbols=", ticker, "&limit=", limit, "&start=", from, 
+    "&end=", to), headers)
+  bars = AlpacaforR::response_text_clean(bars)
+  bars = lapply(bars, function(l){
+    nms <- c(time = "t", open = "o", high = "h", low = "l", close = "c", volume = "v")
+    out <- dplyr::mutate_at(l, dplyr::vars("t"), ~as.POSIXct(.,origin = "1970-01-01")) %>% dplyr::mutate_at(dplyr::vars(o,h,c,l,v),~as.numeric(.)) %>%
+      dplyr::rename((!!nms))
+  })
+  return(bars)
+}
+Positions_ts <- get_bars(Positions_v, from = lubridate::today() - lubridate::years(4))
+
+```
+```{r 'Add Additional data for IVs'}
+source("JobsScripts/parameters.R")
+# ----------------------- Fri Jul 19 09:36:31 2019 ------------------------#
+#Add Additional data to account for NA on indicators
+if (xts::is.xts(Positions_ts$GOOG)) {
+   earliest.date <- min(time(Positions_ts$GOOG))
+ } else {
+   td_nm <- stringr::str_extract(names(Positions_ts$GOOG), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+   earliest.date <- min(Positions_ts$GOOG[[td_nm]])
+ }
+Positions_ext <- purrr::imap(Positions_ts, ed = earliest.date, wind = params$wind, function(.x, .y, ed, wind){
+  td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+  if (xts::is.xts(.x)) {
+   to <- min(time(.x)) - lubridate::days(1)
+   from <- min(time(.x)) - {wind[[4]] * 4}
+ } else {
+   
+   to <- min(.x[[td_nm]]) - lubridate::days(1)
+   from <- to - {wind[[4]] * 4}
+ }
+  if (!to < ed) {
+    message(paste0("No data to retrieve for:", .y))
+    return(.x)
+  }
+  message(paste0("Retrieving data for: ",.y))
+  .data <- AlpacaforR::get_bars(.y, from = from, to = to)
+  if (xts::is.xts(.x)) {
+    .data <- xts::xts(.data[[1]][, - c("time")], order.by = .data[[1]][["time"]])
+    out <- rbind.xts(.data, .x)
+  } else {
+      out <- rbind.data.frame(.data[[1]], .x)
+      out <- tibbletime::tbl_time(out, index = !!td_nm)
+  }
+  attr(out, "Sym") <- .y
+  return(out)
+})
+
+```
 
  
 ```{r 'Add Sign indicator_Change Date'}
@@ -154,12 +269,19 @@ Positions_ts %<>% lapply(function(l){
 })
 ```
 ```{r 'Fill Dates for Proper Windowing'}
-Positions_ts %<>% purrr::map2(.y = names(.), function(.x, .y){ # Actual Time for measuring exact weeks, quarters and approx. months
+Positions_ts %<>% purrr::imap(function(.x, .y){ # Actual Time for measuring exact weeks, quarters and approx. months
+  if (xts::is.xts(.x)){
 out <- xts(order.by = seq(min(time(.x)), max(time(.x)), by = "1 days")) %>% merge.xts(l) %>% na.locf()
 xtsAttributes(out) <- list(Sym = .y)
+  } else {
+    td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% .[1]
+    out <- data.frame(time = seq(min(.x[, td_nm, drop = T]), max(.x[, td_nm, drop = T]), by = "1 days"), stringsAsFactors = F) %>% left_join(.x) %>% na.locf 
+  out <- tibbletime::tbl_time(out, index = !!td_nm)
+  attr(out, "Sym") <- .y
+}
 return(out)
 })
-
+.x <- Positions_ts[[1]]
 ```
 
 ```{r 'Add Risk Metrics'}
@@ -246,6 +368,22 @@ lapply(dad_pos_ggp,FUN=function(ggp){plotly::ggplotly(ggp, dynamicTicks = T, too
 ```
 
 ### Individual
+```{r 'Relationship between RV and closing Price'}
+ 
+purrr::map(stringr::str_extract_all(names(Positions_ts[[1]]), ".*rv$") %>% subset(subset = nchar(.) > 0) %>% purrr::compact(), .data = Positions_ts[[1]], function(.x, .data){
+  
+  v <- rlang::sym(.x)
+  .data %<>% dplyr::mutate(y_var = !!v * close)
+  .data %>% ggplot(data = .,mapping = aes(x = time))+
+geom_line(aes(y = y_var))+
+  geom_line(aes(y = close)) + 
+    xlab(.x)+
+    ylab("")+
+    ggtitle(paste0("Correlation: ",cor(.data[["y_var"]], .data[["close"]])))+
+    theme(plot.title = element_text(hjust = .5),plot.subtitle = element_text(hjust = .5))
+})
+```
+
 ```{r 'Charts for Individual Portfolio'}
 pos_ggp <- lapply(seq_along(pos),pos = pos,FUN=function(l,pos){
   pos[[l]] %>% 
@@ -282,7 +420,7 @@ wind  <-  c(weeks = 7, months = 7*4, quarters = 7*4*3)
 <button class="btn btn-sm btn-success" href="#sma" role="button" data-toggle="collapse" data-target="#demo">View Simple Moving Averages</button>
 <div id="sma" class="collapse">
 ```{r 'Add SMA'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Simple Moving Averages") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add Simple Moving Averages") 
 ```
 </div>
 
@@ -290,7 +428,7 @@ knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Simple
 <button class="btn btn-sm btn-success" href="#ADX" role="button" data-toggle="collapse" data-target="#demo">View ADX</button>
 <div id="adx" class="collapse">
 ```{r 'Add ADX'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ADX") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add ADX") 
 ```
 
 
@@ -313,11 +451,11 @@ AND [Daily Minus DI(14) crosses Daily Plus DI(14)]
 AND [Daily Close < Daily SMA(50,Daily Close)]
 
 ```{r 'Add ADX Signal'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ADX signal") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add ADX signal") 
 ```
 
 ```{r 'Add Compressed ADX'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Compressed ADX") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add Compressed ADX") 
 ```
 </div>
 
@@ -330,7 +468,7 @@ Referencing: <a href="https://www.quantinsti.com/blog/predictive-modeling-algori
 ```{r 'Add Williams Indicator'}
 # ----------------------- Fri May 04 10:35:38 2018 ------------------------#
 # Add the Williams %R where per = vector of period lengths.
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Williams Percent R") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add Williams Percent R") 
 ```
 </div>
 
@@ -338,7 +476,7 @@ knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add Willia
 <button class="btn btn-sm btn-success" href="#rsi" role="button" data-toggle="collapse" data-target="#demo">View RSI</button>
 <div id="rsi" class="collapse">
 ```{r 'Add RSI'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add RSI") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add RSI") 
 ```
 
 <strong>Oversold in Uptrend</strong>
@@ -358,7 +496,7 @@ AND [Daily RSI(5,Daily Close) >= 70]
 ```{r 'Add RSI Indicator',eval=F}
 # ----------------------- Tue Apr 24 11:26:17 2018 ------------------------#
 # Needs refinemnt of factor indicators
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add RSI Indicator") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add RSI Indicator") 
 ```
 </div>
 
@@ -373,7 +511,7 @@ knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add RSI In
 
 
 ```{r 'Add ROC and Momentum'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ROC And Momentum") 
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add ROC And Momentum") 
 ```
 </div>
 ### Add Average True Range
@@ -387,7 +525,7 @@ ATR is best used to set a stop loss at the daily low - 1ATR
 ```{r 'Add ATR'}
 # ----------------------- Sat May 05 10:15:47 2018 ------------------------#
 # Average True Range could be useful for setting stop-loss
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ATR")
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add ATR")
 ```
 </div>
 
@@ -398,7 +536,7 @@ knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add ATR")
 ```{r 'Add SAR'}
 # ----------------------- Sat May 05 10:15:47 2018 ------------------------#
 # Average True Range could be useful for setting stop-loss
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add SAR")
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add SAR")
 ```
 <strong>Break Above Falling SAR</strong>
 AND [Yesterday's Daily High < Yesterday's Daily Parabolic SAR(0.01,0.2)] 
@@ -407,7 +545,7 @@ AND [Daily High > Daily Parabolic SAR(0.01,0.2)]
 AND [Yesterday's Daily Low > Yesterday's Daily Parabolic SAR(0.01,0.2)] 
 AND [Daily Low < Daily Parabolic SAR(0.01,0.2)]
 ```{r 'Add SAR Indicator'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add SAR Indicator")
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add SAR Indicator")
 ```
 ```{r 'SAR Tune'}
 sarParam_df <- expand.grid(af = c(seq(.01,.2,.01)), mf = c(5,10,20,50)) %>% mutate(maf = af*mf) %>% select(-mf)
@@ -421,35 +559,60 @@ sarParam_df <- expand.grid(af = c(seq(.01,.2,.01)), mf = c(5,10,20,50)) %>% muta
 ### Add MACD Compressed
 
 ```{r 'Add MACD Compressed'}
-knitr::read_chunk("Jobs & Scripts/AddAllVariablestoData.R", labels = "Add MACD Compressed")
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add MACD Compressed")
 ```
 </div>
+<button type="button" data-toggle="collapse" data-target="ephemeris" class="btn btn-outline-primary">View Ephemeris</button>
+<div class="collapse" id="ephemeris">
+
+### Add Ephemeris
+```{r 'Add Ephemeris'}
+knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add Ephemeris Data")
+
+```
+</div>
+
 
 # Response Variables
 ## Test Trailing Stop Loss
 ```{r 'Test Trailing Stop Loss Fn'}
-source("Jobs & Scripts/QuantFunctions_TSL.R")
-rstudioapi::jobRunScript("Jobs & Scripts/TestTSL.R",workingDir = getwd(), exportEnv = "R_GlobalEnv")
+source("JobsScripts/QuantFunctions_TSL.R")
+rstudioapi::jobRunScript("JobsScripts/TestTSL.R",workingDir = getwd(), exportEnv = "R_GlobalEnv")
 ```
 ```{r 'Add TSL as RV'}
-rstudioapi::jobRunScript("Jobs & Scripts/AddTSLRV.R",workingDir = getwd(), exportEnv = "R_GlobalEnv")
+rstudioapi::jobRunScript("JobsScripts/AddTSLRV.R",workingDir = getwd(), exportEnv = "R_GlobalEnv")
 ```
 
 
 
-```{r 'Save or Load Data'}
-load(file = list.files() %>% .[stringr::str_which(., "gain")])
-SL <- rstudioapi::document_position(443,1)
-if (tibble::is_tibble(Positions_ts[[1]])) tsrange <- Positions_ts[[1]] %>% tibbletime::get_index_col() %>% range else Positions_ts[[1]] %>% time %>% range
-save(Positions_ts, file = paste0("Positions_ts",paste(tsrange,collapse = "_"),".Rdata"))
-load(file = list.files()[stringr::str_which(list.files(), "Positions_ts\\d")])
-if (tibble::is_tibble(Positions_ts[[1]])) tsrange <- Positions_new[[1]] %>% tibbletime::get_index_col() %>% range else Positions_new[[1]] %>% time %>% range
-save(Positions_new, file = paste0("Positions_new",paste(tsrange,collapse = "_"),".Rdata"))
-load(file = list.files()[stringr::str_which(list.files(), "Positions_new")])
-save(Positions_tsl, file = "Positions_tsl.Rdata")
-load(file = "Positions_tsl.Rdata")
-```
-```{r, eval=F}
+
+```{r 'Fns for working with Position_ts', eval=F}
+#Load Position_ts from csv Backups
+pdatapath <- "~/R/Quant/PositionData"
+datetime <- list.files(path = pdatapath)[stringr::str_which(list.files(path = pdatapath), "_rv\\.csv$")] %>% stringr::str_extract("\\d{4}-\\d{2}-\\d{2}(?=\\_rv\\.csv)") %>% lubridate::ymd() %>% max() %>% as.character() 
+Positions_ts <- list.files(path = pdatapath)[stringr::str_which(list.files(path = pdatapath), paste0(datetime,"_rv\\.csv$"))] %>% setNames(object = ., stringr::str_extract(., "^[A-Z]+")) %>%  purrr::imap(function(.x, .y){
+  out <- readr::read_csv(file = paste0("PositionData/",.x)) %>% dplyr::mutate_at( dplyr::vars(time, dplyr::ends_with("_ind")), dplyr::funs(as.POSIXct, .args = list(origin = lubridate::origin)))
+  attr(out, "Sym") <- .y
+  out
+})
+# Change columns to appropriate types and add the attributes
+Positions_ts %<>% purrr::imap(function(.x, .y){ # Actual Time for measuring exact weeks, quarters and approx. months
+  td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% .[1]
+  if (is.numeric(.x[, td_nm])){
+    .x <- dplyr::mutate_at(.x, dplyr::vars(time), dplyr::funs(as.POSIXct, .args = list(origin = lubridate::origin)))}
+  if (xts::is.xts(.x)){
+    out <- .x
+#out <- xts(order.by = seq(min(time(.x)), max(time(.x)), by = "1 days")) %>% merge.xts(l) %>% na.locf()
+xtsAttributes(out) <- list(Sym = .y)
+  } else {
+    out <- .x
+    #out <- data.frame(time = seq(min(out[, td_nm, drop = T]), max(out[, td_nm, drop = T]), by = "1 days"), stringsAsFactors = F) %>% left_join(.x) %>% na.locf 
+  out <- tibbletime::tbl_time(out, index = !!td_nm)
+  attr(out, "Sym") <- .y
+}
+return(out)
+})
+
 #Remove extraneous macd that snuck in and has been effing up models
 Positions_ts <- purrr::map(Positions_ts, function(.x){
   .x[,-stringr::str_which(colnames(.x), "^macd$")]
@@ -468,7 +631,17 @@ Positions_ts <- purrr::map(Positions_ts, function(.x){
   names(out)[cl.nm] <- nms
   return(out)
 } )
+# Save Positions Individually
+purrr::map2(.x = Positions_ts, .y = names(Positions_ts), function(.x, .y){
+  print(.y)
+  if (!xts::is.xts(.x)) {
+  write_csv(.x, path = paste0("PositionData/",.y,min(.x$Time),"_",max(.x$Time),".csv"))
+    } else {
+    zoo::write.zoo(.x, file = paste0("PositionData/",.y,time(.x) %>% min,"_",time(.x) %>% max,".csv"), index.name = "Time", col.names = T)
+  }
+})
 ```
+
 
 
 # Generic Fn to add all Signals and Response Variables
@@ -477,50 +650,73 @@ Positions_ts <- purrr::map(Positions_ts, function(.x){
 # First change Positions to object entitled dat
 dat <- Positions_ts
 # Set the signal windows desired
-wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
+wind  <-  list(weeks = lubridate::weeks(1), moonphase = lubridate::weeks(2), mooncycle = lubridate::weeks(4), quarters = lubridate::weeks(4*3))
 # Save the file
 save(dat, wind, file = "dat.Rdata")
-rstudioapi::jobRunScript("Jobs & Scripts/AddAllDVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+
 # Once Completed return the variable to it's original name and save it
-dat %>% assign("Positions_ts", . , envir = globalenv()) 
+dat %>% assign("Positions_ts_iv", . , envir = globalenv()) 
 #Save
 rstudioapi::setCursorPosition(SL)
 ```
 
+```{r 'Trim Positions_ext with IVs back to Positions_ts length'}
+dat <- Positions_ext
+# Set the signal windows desired
+wind  <-  list(weeks = lubridate::weeks(1), moonphase = lubridate::weeks(2), mooncycle = lubridate::weeks(4), quarters = lubridate::weeks(4*3))
+# Save the file
+save(dat, wind, file = "dat.Rdata")
+rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+Positions_ext <- purrr::map2(Positions_ts, dat, function(.x, .y){
+  s <- attr(.x, 'Sym')
+  if (xts::is.xts(.x) & xts::is.xts(.y)) {
+    out <- window(.y, start = min(time(.x)))
+  } else {
+     td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+    out <- .y[.y[[td_nm]] >= min(.x[[td_nm]]), ]
+  }
+  attr(out, 'Sym') <- s
+  return(out)
+})
+
+```
+```{r 'Join with existing RVs'}
+Positions_ts_rv_iv <- purrr::map2(Positions_ext, Positions_ts_rv, function(.x, .y){
+  s <- attr(.x, 'Sym')
+  if (xts::is.xts(.x) & xts::is.xts(.y)) {
+    out <- xts::merge.xts(.x, .y, join = "left")
+  } else {
+     nms <- stringr::str_extract(names(.x), "^time$|^date$|^open$|^high$|^low$|^close$|^volume$") %>% subset(subset = !is.na(.)) 
+     
+    out <- dplyr::left_join(.x, .y, by = nms)
+  }
+  attr(out, 'Sym') <- s
+  return(out)
+})
+```
+
+
+
 ```{r 'Add RVs to Data'}
 dat <- Positions_ts
-# Set the signal windows desired
-wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
-# Save the file
-TSLvars <- list(
-  tsla = function(x){
-  cl_cl <- stringr::str_which(colnames(x),"close")
-  sd(x[,cl_cl, drop = T]) * .5},
-  tsla = function(x){
-  cl_cl <- stringr::str_which(colnames(x),"close")
-  sd(x[,cl_cl, drop = T])},
-  tsla = function(x){
-  cl_cl <- stringr::str_which(colnames(x),"close")
-  sd(x[,cl_cl, drop = T]) * 2},
-  retro = c(n = wind[1], hilop = .9),
-  retro = c(n = wind[2], hilop = .9),
-  retro = c(n = wind[3], hilop = .9),
-  retro = c(n = wind[4], hilop = .9))
-TSLvars %<>% append(seq(.04,.24,.02) %>% setNames(nm = rep("tslp",length(.))) %>% as.list)
+# Set the signal windows desired in parameters.r
+source("~/R/Quant/JobsScripts/parameters.R")
 add <- F
-
-save(dat, wind, TSLvars, add, file = "dat.Rdata")
-rstudioapi::jobRunScript("Jobs & Scripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+save(dat, TSLvars, add, file = "~/R/Quant/dat.Rdata")
+rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
 # Once Completed return the variable to it's original name and save it
-dat %>% assign("Positions_ts", . , envir = globalenv()) 
+dat %>% assign("Positions_ts_rv", . , envir = globalenv()) 
 # Save
 rstudioapi::setCursorPosition(SL)
 ```
 
+
+
 ```{r 'Add Gain Mix Period RVs'}
-dat <- Positions_ts
+# Deprecated
 save(dat, file = "dat.Rdata")
-rstudioapi::jobRunScript(path = "Jobs & Scripts/GainMixPeriod.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+rstudioapi::jobRunScript(path = "JobsScripts/GainMixPeriod.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
 # Save
 Positions_ts <- dat
 rstudioapi::setCursorPosition(SL)
@@ -529,16 +725,73 @@ rstudioapi::setCursorPosition(SL)
 
 
 ```{r 'Function to Optimize Returns'}
-pct <- seq(.05, .25, .01)
-names(pct) <- seq(.05, .25, .01)
+pct <- seq(.00, .2, .01)
+names(pct) <- seq(.00, .2, .01)
 dat <- Positions_ts
-save(dat, pct, file = "dat.Rdata")
-rstudioapi::jobRunScript(path = "Jobs & Scripts/MapReturns.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+.opts <- list(bs.v = T, with.gains = F, max.gain = T)
+save(dat, pct, .opts, file = "dat.Rdata")
+rstudioapi::jobRunScript(path = "JobsScripts/MapReturns.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
 
-Positions_ret <- dat
+
 ```
 ```{r 'View Optimized Returns'}
-tsl_performance <- purrr::map_depth(Positions_ret, .depth = 3, .f = function(.x) {
+Positions_ret <- ret
+save(Positions_ret, file = "Positions_ret.Rdata", compress = "xz")
+load("Positions_ret.Rdata")
+# ----------------------- Thu Jul 18 17:46:44 2019 ------------------------#
+#Best returns
+best.returns <- Positions_ret %>% purrr::map_depth(.depth = 2, .f = function(.x){
+  out <- list()
+  out$trades <- purrr::map(.x, .f = magrittr::extract, "trades") %>% purrr::map(.f = `[[`, 1)
+  out$trades <- purrr::map(out$trades, function(.x){
+    nr <- nrow(.x)
+    if(HDA::go("nr")) {
+    out <- cbind(.x,start = seq(1, nr))
+    } else out <- .x
+  return(out)})
+  out$trades <- data.table::rbindlist(out$trades, idcol = T)
+  
+  out$returns <- purrr::map(.x, .f = magrittr::extract, "returns") %>% purrr::map(.f = `[[`, 1) %>% purrr::map(as.data.frame)
+  out$returns <- data.table::rbindlist(out$returns, idcol = T)
+  out <- cbind.data.frame(out$trades, out$returns %>% dplyr::select(- ".id"))
+  return(out)
+  }) %>% purrr::map(~data.table::rbindlist(., idcol = T)) %>% data.table::rbindlist(., idcol = T)
+names(best.returns)[c(1:3)] <- c("sym","tsl","pct")
+best.returns %>% group_by(sym, tsl) %>% filter(Cum.Returns == max(Cum.Returns))
+#End best returns
+ #----------------------- Thu Jul 18 17:47:20 2019 ------------------------#
+# ----------------------- Thu Jul 18 18:02:42 2019 ------------------------#
+#Positions_tsl
+Positions_tsl <- Positions_ret %>% purrr::map_depth(.depth = 2, .f = function(.x){
+  out <- list()
+  out$trades <- purrr::map(.x, .f = magrittr::extract, "trades") %>% purrr::map(.f = `[[`, 1)
+  out$trades <- purrr::map(out$trades, function(.x){
+    nr <- nrow(.x)
+    if(HDA::go("nr")) {
+    out <- cbind(.x,start = seq(1, nr))
+    } else out <- .x
+  return(out)})
+  out$trades <- data.table::rbindlist(out$trades, idcol = T)
+  
+  out$returns <- purrr::map(.x, .f = magrittr::extract, "returns") %>% purrr::map(.f = `[[`, 1) %>% purrr::map(as.data.frame)
+  out$returns <- data.table::rbindlist(out$returns, idcol = T)
+  out <- cbind.data.frame(out$trades, out$returns %>% dplyr::select(- ".id"))
+  return(out)
+  }) %>% purrr::map(~data.table::rbindlist(., idcol = T))
+Positions_tsl <- Positions_tsl %>% purrr::map(function(.x){names(.x)[c(1,2)] <- c("tsl","pct")
+return(.x)
+})
+Positions_tsl_maximums <- purrr::map(Positions_tsl, function(.x){
+  out <- dplyr::inner_join(.x %>% dplyr::group_by(tsl,pct) %>% dplyr::filter(Cum.Returns == max(Cum.Returns)) %>% dplyr::summarise_at(dplyr::vars(dplyr::contains("."),dplyr::contains("%"), Returns),~mean), .x %>% dplyr::group_by(tsl) %>% dplyr::summarize(`75%max` = mean(`75%max`),`100%max` = mean(`100%max`)) %>% dplyr::arrange(dplyr::desc(`75%max`)), by = c("tsl")) %>% dplyr::select(- dplyr::ends_with(".x")) %>% dplyr::rename_at(dplyr::vars(dplyr::ends_with(".y")), ~ list(stringr::str_replace(., pattern = "\\.y", replacement = ""))) %>% dplyr::arrange(dplyr::desc(Cum.Returns))
+  return(out)
+})
+save(Positions_tsl, file = paste0("Positions_tsl",lubridate::today(),".Rdata"))
+#End Positions_tsl
+ #----------------------- Thu Jul 18 18:02:54 2019 ------------------------#
+```
+```{r 'May_June 2019 TSL Performance'}
+
+tsl_performance <- purrr::map_depth(ret, .depth = 3, .f = function(.x) {
   out <- c(Returns = attr(.x, "Returns"),Cum.Returns = attr(.x, "Cum.Returns"))
   return(out)
 }) %>% purrr::map_depth(.depth = 2, .f = function(.x){
@@ -546,6 +799,7 @@ tsl_performance <- purrr::map_depth(Positions_ret, .depth = 3, .f = function(.x)
   if(length(.x) == 0) return(NULL)
   d <- do.call("rbind",.x)
   if (stringr::str_detect(colnames(d),"Returns") %>% any){
+    #TODO Add the top quartile rather than just the single max
   ind <- which.max(d[,"Returns", drop = T])
   pct <- rownames(d)[ind]
   returns <- d[ind,"Returns", drop = T]
@@ -569,39 +823,126 @@ tsl_performance <- purrr::map_depth(Positions_ret, .depth = 3, .f = function(.x)
   }
   return(out)
  })
-Positions_tsl <- tsl_performance
-
-save(Positions_tsl, file = "Positions_tsl.Rdata")
 ```
-
+ 
 ```{r 'Add Benchmarks'}
-best_tsl <- Positions_tsl
-dat <- Positions_ts
+load(file = params$paths$Positions_tsl)
+best_tsl <- purrr::map2(Positions_tsl[names(dat)], .y = dat, tslv = params$TSLvars, function(.x, .y, tslv){
+  .x %<>% dplyr::mutate_at(dplyr::vars(tsl),~ stringr::str_replace(.,"\\_rv$",""))
+  # Get the TSL with the most cumulative returns and with the most possible limit gain for a given period
+  out <- list(tsl_types = rbind.data.frame(dplyr::arrange(.x, dplyr::desc(Cum.Returns)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")],
+  dplyr::arrange(.x, dplyr::desc(`100%max`)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")]))
+  # Are there tsl not already represented in the data?
+  existing_tsl <- {out$tsl_types$tsl[out$tsl_types$tsl %in% {names(.y)[stringr::str_which(names(.y),"rv$")] %>% stringr::str_replace(.,"\\_rv$","")}] %>% length} > 0
+  # If there are and add is true (defaults to true) then add only those that don't already exist
+  if (existing_tsl){
+  # filter the table for those tsl not already in the data
+  out$tsl_types %<>% dplyr::filter(!tsl == existing_tsl) }
+  # Return the TSLvars parameters for each of those TSL types
+  out$tslv <- tslv[out$tsl_types[["tsl"]]]
+  return(out)
+  })
+dat <- Positions_ts_rv_iv
 save(dat, best_tsl, file = "dat.Rdata")
-rstudioapi::jobRunScript(path = "Jobs & Scripts/AddBenchmarks.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+rstudioapi::jobRunScript(path = "JobsScripts/AddBenchmarks.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+best_tsl <- ret
+save(best_tsl, file = "best_tsl.Rdata")
+```
+```{r 'Examine overall performance of various ML Methods'}
+rstudioapi::jobRunScript(path = "MdlBkp/CaretTuningGrids.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv") 
 ```
 
-```{r 'Test Ephemeris Correlation'}
-Years <- read_csv("Years.csv")[c("Date", "SUN.SI", "MOON.SI", "MERCURY.SI","VENUS.SI", "MARS.SI")]
 
+```{r 'Tuning Grids and MethodList'}
+methodlist <- c("xgbTree", "xgbDART", "mlpWeightDecayML", "bagEarthGCV")
+tGs <- purrr::map(overall.performance, methodlist = methodlist, function(.x, methodlist){
+  .x <- .x[names(.x) %in% methodlist]
+  out <- purrr::imap(.x, function(.x, .y){
+    pns <- as.character(caret::modelLookup(stringr::str_extract(.y, "\\w+"))$parameter)
+    names(pns) <- as.character(caret::modelLookup(stringr::str_extract(.y, "\\w+"))$parameter)
+    tG <- purrr::map(pns, op = .x, function(.x, op){
+  unique(op[[.x]]) %>% na.omit %>% unclass
+}) %>% expand.grid
+    return(tG)
+  })
+  return(out)
+})
+
+
+modelSpecs <- purrr::map(tGs, ml = methodlist, function(.x, ml){
+  out <- purrr::imap(.x, ml = ml, function(.x, .y, ml){
+    if (any(.y %in% ml)){
+    out <- caretEnsemble::caretModelSpec(method = .y, tuneGrid = .x )      
+    } else {
+      out <- NULL
+    }
+    return(out)
+  }) %>% purrr::compact()
+  return(out)
+})
+tuningGrids <- list(
+mlpWeightDecayML = list(layer1 = c(1,3,5,7,9), layer2 = c(0,1,3,5,7,9), layer3 = c(0,1,3,5,7,9), decay = .1/10^seq(1,4)) %>% expand.grid
+)
+#mlpSGD.tG <- overall.performance[["FB"]][["mlpSGD"]]
+modelSpecs <- purrr::map(modelSpecs, tG = tuningGrids, mlist = methodlist, function(.x, tG, mlist){
+  mS <- .x
+  pf <- sys.frame(sys.nframe())
+  # If there are models in methodlist missing from the current specified modelspecs
+  if (any(!mlist %in% names(mS))) {
+  mS <- append(mS, purrr::map(mlist[!mlist %in% names(mS)], ~ caretEnsemble::caretModelSpec(method = ., tuneLength = 7))) %>% setNames(nm = c(names(mS),mlist[!mlist %in% names(mS)]))
+  } 
+  if (any(purrr::imap_lgl(mS[names(tG)], pf = pf, function(.x, .y, pf){
+     is.null(.x$tuningGrid) & !is.null(pf$tG[[.y]])
+  }))) { #if there are unset tuning grids in the modelspec for which tuning grids have been specified manually
+    mS[names(tG)] <- purrr::imap(mS[names(tG)], pf = pf, function(.x,.y, pf){
+      .x$tuneLength <- NULL
+      .x$tuningGrid <- pf$tG[[.y]]
+      return(.x)
+    })
+  }
+  return(mS)
+})
+# Get names not represented in modelSpecs thus far
+nms <- names(Positions_ts_rv_iv)[!names(Positions_ts_rv_iv) %in% names(modelSpecs)]
+names(nms) <- names(Positions_ts_rv_iv)[!names(Positions_ts_rv_iv) %in% names(modelSpecs)]
+# Append new caretModelSpecs
+modelSpecs <- append(modelSpecs, purrr::map(nms, mS = modelSpecs[[1]], function(.x, mS){
+  out <- purrr::imap(mS, function(.x, .y){
+    if (is.null(.x$tuneGrid)) {
+      .x$tuneLength <- 7
+      }
+    .x$method <- stringr::str_extract(.y, "\\w+")
+    
+    return(.x)
+  })
+  return(out)
+}))
+# add PCA to multilayer perceptron
+modelSpecs <- purrr::map(modelSpecs, function(.x){
+  out <- purrr::imap(.x, function(.x,.y){
+    if (stringr::str_detect(.y ,"mlp"))  .x$preProcess <- "pca"
+    return(.x)
+  })
+})
+# Sort
+modelSpecs <- modelSpecs[names(Positions_ts_rv_iv)]
 ```
-
 
 ```{r 'Machine Learning Algorithm Training'}
 # Recommended to clear environment and then load data so as to free up all RAM
 rm(list = ls())
-load(file = "Positions_ts2014-05-08_2019-05-07.Rdata")
-load(file = "Positions_tsl.Rdata")
-methodList <- c("xgbTree", "nnet", "pcaNNet") # Add method names. See http://topepo.github.io/caret/available-models.html for details
+load(file = params$paths$Positions_ts)
+load(file = params$paths$Positions_tsl)
+#methodList <- c("xgbTree", "C5.0", "mlpKerasDropout", "mlpKerasDecay") # Add method names. See http://topepo.github.io/caret/available-models.html for details
     # If first run, use tunelength. If final or subsequent runs with a refined tuning grid, provide tuneGrids in the lapply call (not in it's function)
 
-dat <- Positions_ts # Pass the list of timeseries objects for which algorithms will trained
-train_rvs <- c("Gain_type","Mix_type")
-best_tsl <- Positions_tsl
-save(methodList, dat, train_rvs, best_tsl, file = "dat_dt.Rdata")
+dat <- Positions_ts_rv_iv[8:20] # Pass the list of timeseries objects for which algorithms will trained
+train_rvs <- NULL
+best_tsl <- best_tsl[names(dat)]
+save(modelSpecs, dat, best_tsl, file = "dat_dt.Rdata")
 # ----------------------- Mon Jun 03 06:12:02 2019 ------------------------#
 # Important to filter all none profitable signals from the type prediction
-rstudioapi::jobRunScript(path = "Jobs & Scripts/TrainModels.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+rstudioapi::jobRunScript(path = "JobsScripts/TrainModels.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
 
 ```
 
@@ -643,64 +984,178 @@ Positions_dt %<>% purrr::map(function(l){
 ```
 
 
-
+```{r 'Get GRPN Historical'}
+googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
+gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
+GRPN <- googlesheets::gs_read(gsPositions, ws = "GRPN")
+GRPN[, c('open','high','low','close','volume')] <- quantmod::OHLCV(GRPN) %>% apply(1, function(r){
+  r[stringr::str_detect(r,"REF")] <- NA
+  return(r)
+}) %>% t %>% zoo::na.locf()
+GRPN %<>% mutate_at(vars(c(2:6)),funs(as.numeric))
+GRPN$changePercent <- purrr::map_dbl(1:nrow(GRPN), GRPN = GRPN, function(.x, GRPN){
+  if (stringr::str_detect(GRPN[.x, "changePercent"], "REF")) {
+  out <- (GRPN[.x,c("close"), drop = T] - GRPN[.x - 1,c("close"), drop = T]) / GRPN[.x - 1,c("close"), drop = T] 
+  } else {out  <- GRPN[.x, c("changePercent"), drop = T] %>% as.numeric}
+  return(out)
+})
+attr(GRPN, "Sym") <- "GRPN"
+Positions_ts$GRPN <- tibbletime::as_tbl_time(GRPN, index = "Time") 
+```
+```{r 'Update BYND'}
+BYND <- googlesheets::gs_read(gsPositions, ws = "BYND")
+BYND[, c('open','high','low','close','volume')] <- quantmod::OHLCV(BYND) %>% apply(1, function(r){
+  r[stringr::str_detect(r,"REF")] <- NA
+  return(r)
+}) %>% t %>% zoo::na.locf()
+BYND %<>% mutate_at(vars(c(2:6)),funs(as.numeric))
+BYND$changePercent <- purrr::map_dbl(1:nrow(BYND), BYND = BYND, function(.x, BYND){
+  if (stringr::str_detect(BYND[.x, "changePercent"], "REF")) {
+  out <- (BYND[.x,c("close"), drop = T] - BYND[.x - 1,c("close"), drop = T]) / BYND[.x - 1,c("close"), drop = T] 
+  } else {out  <- BYND[.x, c("changePercent"), drop = T] %>% as.numeric}
+  return(out)
+})
+BYND <- tibbletime::as_tbl_time(BYND, index = "Time") 
+attr(BYND, "Sym") <- "BYND"
+Positions_ts$BYND <- BYND
+```
 
 # Test Out of Time
 ## Create OOT & Add Signals 
-```{r 'Gather new Data from Portfolio Sheet and add Signals'}
+```{r 'Gather new Data from Portfolio Sheet'}
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
-close <- googlesheets::gs_read(gsPositions, ws = 'Holdings')
-high <- googlesheets::gs_read(gsPositions, ws = '(Hi)')
-low <- googlesheets::gs_read(gsPositions, ws = '(Lo)')
-close$Date %<>% lubridate::mdy_hms() %>% format("%m/%d/%Y") %>% lubridate::mdy()
-high$Date %<>% lubridate::mdy_hms() %>% format("%m/%d/%Y") %>% lubridate::mdy()
-low$Date %<>% lubridate::mdy_hms() %>% format("%m/%d/%Y") %>% lubridate::mdy()
-Positions_hlc <- left_join(close, high, by = "Date", suffix = c(".close",".high")) %>% left_join(low, by = "Date")
-toNum <- function(x){
+shts <- purrr::map(.x = c('Holdings', '(Hi)' , '(Lo)', '(Op)', '(Vo)', '(cP)'), gs = gsPositions, .f =  function(.x, gs){
+    out <- googlesheets::gs_read(gs, ws = .x, trim_ws = T)
+    Sys.sleep(1)
+    return(out)
+    })
+shts <- purrr::map(shts,function(.x){
+    .x$Date %<>% lubridate::mdy_hms() %>% format("%m/%d/%Y") %>% lubridate::mdy()
+    return(.x)
+  })
+Positions_v <- names(Positions_ts)
+names(Positions_v) <- names(Positions_ts)
+Positions_new <- purrr::map(Positions_v, shts = shts, function(.x, shts){
+  
+  
+    clm <- purrr::map(shts, purrr::pluck, .x)
+    clm <- do.call('cbind', clm) %>% as.data.frame
+    
+    names(clm) <- c("close","high","low","open","volume","changePercent")
+    
+    toNum <- function(x){
   x %>% stringr::str_replace_all("\\$|\\,","") %>% as.numeric
-}
-tickers <- names(close)[-1]
-names(tickers) <- names(close)[-1]
-Positions_new <-  purrr::map(.x = tickers, dat = Positions_hlc %>% filter(Date > {(time(Positions_ts_gain[[1]]) %>% max) - 200}), toNum = toNum, .f = function(.x, dat, toNum){
-  ind <- c(paste0(.x,".close"), paste0(.x, ".high"), .x)
-  xts.dat <- dat[, ind] %>% mutate_all(funs(toNum))
-  out <- xts(xts.dat, order.by = dat[["Date"]])
-  xtsAttributes(out) <- list(Sym = .x)
-  colnames(out) <- c("close","high","low")
+    }  
+    clm %<>% mutate_if(.pred = funs(is.factor),funs(toNum))
+    dt.clm <- purrr::pluck(shts[[1]],"Date")
+    out <- cbind.data.frame(Time = dt.clm, clm) 
+    out %<>% na.omit
+    #Fill dates for proper windowing
+   out <- dplyr::left_join(data.frame(Time = seq(out$Time %>% min,out$Time %>% max, "1 days")), out) %>% na.locf %>% tibbletime::tbl_time(index = "Time")
+  out$Dec_date <- tibbletime::get_index_col(out) %>% lubridate::decimal_date() %>% {. - as.numeric(stringr::str_match(., "^\\d+"))}
+    attr(out,"Sym") <- .x
   return(out)
 })
-#Fill dates for proper windowing
-Positions_new %<>% lapply(function(l){ # Actual Time for measuring exact weeks, quarters and approx. months
-  out <- xts(order.by = seq(min(time(l)), max(time(l)), by = "1 days")) %>% merge.xts(l) %>% na.locf()
-  
-})
-rm(Positions_hlc)
-dat <- Positions_new
+```
+
+
+```{r 'Add Signals to New Data'}
+dat <- Positions_ext
 # Set the signal windows desired
-wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
+# wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
 # Save the file
-save(dat, wind, TSLvars, file = "dat.Rdata")
-rstudioapi::jobRunScript("Jobs & Scripts/AddAllDVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+save(dat, file = "dat.Rdata")
+rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
 Positions_new <- dat
 save("Positions_new", file = paste0("Positions_new.Rdata"))
 ```
 ```{r 'Add RVs to New Data'}
 # After the previous completes
 save(dat, wind, TSLvars, file = "dat.Rdata") #TSLvars from Chunk 35: Add RVs to Data
-rstudioapi::jobRunScript("Jobs & Scripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
 Positions_new <- dat
 save("Positions_new", file = paste0("Positions_new.Rdata"))
 ```
 
 ```{r 'Test ML Ensemble Models with OOT Data'}
 # Supply if OOT data is later than training data, if OOT data is older than training data do not supply
-OOTbegin <- lubridate::ymd(Positions_ts[[1]] %>% tibbletime::get_index_col() %>% max)
+OOTbegin <- lubridate::ymd({Positions_ts[[1]] %>% tibbletime::get_index_col() %>% max})
 dat <- Positions_new
 best_tsl <- Positions_tsl
 save(dat, best_tsl, OOTbegin, file = "dat.Rdata")
-rstudioapi::jobRunScript("Jobs & Scripts/ApplyModelstoNewData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+rstudioapi::jobRunScript("JobsScripts/ApplyModelstoNewData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+purrr::map(dat, attr, "Cum.Returns")
 Positions_strat <- dat
+```
+
+```{r 'Automated OOT Data Test'}
+# ----------------------- Tue Jun 18 10:02:30 2019 ------------------------#
+# Run the OOT data script
+rstudioapi::jobRunScript("JobsScripts/AutomatedOOTDataTest.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+
+```
+
+```{r 'Create Automated OOT Test Task'}
+
+rscript <- "C:/Users/Administrator/Documents/R/Quant/JobsScripts/AutomatedOOTDataTest.R"
+taskscheduleR::taskscheduler_create(basename(rscript),rscript, schedule = "ONCE", starttime = "06:16", rscript_args = "--verbose",debug = T)
+tasks <- taskscheduleR::taskcheduler_runnow("AutomatedOOTDataTest.R")
+
+times <- 09:15 %>% purrr::map(function(.x){
+  if(nchar(.x)<2) return(stringr::str_replace(.x,"^","0")) else {
+    return(.x)
+    }}) %>% unlist %>% paste0(":55")
+days  <- c("MON", "TUE",
+  "WED", "THU", "FRI")
+purrr::map(times, days = days, rscript = rscript, function(.x, days, rscript){
+  out <- purrr::map(days, time = .x, rscript = rscript, function(.x, time, rscript){
+    taskname = paste0(basename(rscript), "_",.x,"_",stringr::str_replace(time,"\\:",""))
+    print(taskname)
+    desc <- taskscheduleR::taskscheduler_create(taskname, rscript,
+  schedule = "WEEKLY", starttime = time,
+  startdate = format(Sys.Date(), "%m/%d/%Y"), rscript_args = "--verbose", days = .x, debug = T)
+    return(c(Task = taskname, Desc = desc))
+  })
+  return(out)
+}) %>% purrr::map(function(.x)do.call(rbind,.x)) %>% do.call(rbind,.) %>% assign(x = paste0(basename(rscript)), ., envir = globalenv())
+save(list = paste0(basename(rscript)), file = paste0(basename(rscript),".Rdata"))
+tasks <- taskscheduleR::taskscheduler_ls()
+taskscheduleR::taskscheduler_delete(basename(rscript))
+```
+
+```{r 'Create Automated Stop loss tasks'}
+
+
+rscript <- "C:/Users/Administrator/Documents/R/Quant/JobsScripts/AutomatedStopLoss.R"
+taskscheduleR::taskscheduler_create(basename(rscript),rscript, schedule = "ONCE", starttime = "06:16", rscript_args = "--verbose",debug = T)
+tasks <- taskscheduleR::taskcheduler_runnow("AutomatedStopLoss.R")
+taskscheduleR::taskscheduler_delete(basename(rscript))
+
+times <- 10:16 %>% purrr::map(function(.x){
+  if(nchar(.x)<2) return(stringr::str_replace(.x,"^","0")) else {
+    return(.x)
+    }}) %>% unlist %>% paste0(":30")
+days  <- c("MON", "TUE",
+  "WED", "THU", "FRI")
+purrr::map(times, days = days, rscript = rscript, function(.x, days, rscript){
+  out <- purrr::map(days, time = .x, rscript = rscript, function(.x, time, rscript){
+    taskname = paste0(basename(rscript), "_",.x,"_",stringr::str_replace(time,"\\:",""))
+    print(taskname)
+    desc <- taskscheduleR::taskscheduler_create(taskname, rscript,
+  schedule = "WEEKLY", starttime = time,
+  startdate = format(Sys.Date(), "%m/%d/%Y"), rscript_args = "--verbose", days = .x, debug = T)
+    return(c(Task = taskname, Desc = desc))
+  })
+  return(out)
+}) %>% purrr::map(function(.x)do.call(rbind,.x)) %>% do.call(rbind,.) %>% assign(x = paste0(basename(rscript)), ., envir = globalenv())
+save(list = paste0(basename(rscript)), file = paste0(basename(rscript),".Rdata"))
+
+load(file = "~/R/Quant/AutomatedStopLoss.R.Rdata")
+purrr::map(AutomatedStopLoss.R[,"Task"],taskscheduleR::taskscheduler_delete)
+load(file = "~/R/Quant/AutomatedOOTDataTest.R.Rdata")
+purrr::map(AutomatedOOTDataTest.R[,1],taskscheduleR::taskscheduler_delete)
+tasks <- taskscheduleR::taskscheduler_ls()
 ```
 
 

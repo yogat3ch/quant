@@ -1,14 +1,72 @@
 # TODO( - Created to add all signals to loaded data called dat)
+message("Script: Add All Independent Variables to data")
 HDA::startPkgs(c("magrittr", "xts", "tidyverse"))
-# Load New Data
-load("dat.Rdata")
+# Load New Data if calling from a jobRunScript - allows for these files to be sourced by the automation and use the data from the automation calling environment
+if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
+  message("Loaded from BG Job, loading dependencies...")
+  load("dat.Rdata")}
 ## @knitr Add attributes for debugging purposes
 dat <- purrr::map2(.x = dat, .y = names(dat), function(.x, .y){
  attr(.x, "Sym") <- .y
   return(.x)
  })
+source("~/R/Quant/JobsScripts/parameters.R")
+# Add wind to this environment
+wind <- params$wind
+
+# ----------------------- Thu Jul 18 19:32:25 2019 ------------------------#
+# Translate wind index values from durations to index values for quantmod
+if (lubridate::is.period(wind[[1]])){
+  wind$sma <-  lubridate::days(200)
+if (is.xts(dat[[1]])) {
+  t.dat <- time(dat[[1]])
+  sma.wind <- purrr::map_dbl(wind, t.dat = t.dat, function(.x, t.dat){
+    out <- {t.dat >= {max(t.dat) - .x}} %>% sum
+    return(out)
+  })
+  wind <- sma.wind[-length(sma.wind)]
+} else {
+  td_nm <- stringr::str_extract(names(dat[[1]]), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+  t.dat <- dat[[1]][[td_nm]]
+  sma.wind <- purrr::map_dbl(wind, t.dat = t.dat, function(.x, t.dat){
+    out <- {t.dat >= {max(t.dat) - .x}} %>% sum
+    return(out) 
+  })
+  wind <- sma.wind[-length(sma.wind)]
+  
+}
+}
+if (!any(names(dat[[1]]) %in% "changePercent")) { 
+dat <- purrr::map(dat, function(.x){
+  x <- with(
+    .x,{
+  x <- quantmod::Delt(close, close, k = 1)
+  x[is.na(x)] <- 0
+  x
+  })
+  
+  .x$changePercent <- as.vector(x)
+  return(.x)
+  })
+}
+## @knitr Add Ephemeris Data
+ephData <- readr::read_csv("~/R/Quant/ephData.csv")
+ephData %<>% select(time, dplyr::ends_with("SI"), - dplyr::starts_with("NEP"), - dplyr::starts_with("PLU"),  - dplyr::starts_with("URA"))
+dat <- purrr::map(dat, edat = ephData, function(.x, edat){
+  s <- attr(.x, "Sym")
+  td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+   if (any(stringr::str_detect(names(.x), "SI$"))) .x <- .x[, - stringr::str_which(names(.x), "SI$")]
+  out <- cbind.data.frame(.x, purrr::map_dfr(.x[[td_nm]], edat = edat, function(.x, edat){
+    edat[which(edat$time < .x) %>% max, - c(1)] %>% purrr::map_dfc(function(.x){
+      factor(.x,levels = c("CP","AQ","PI","AR", "TA", "GE", "CN", "LE", "VI","LI","SC","SG"))
+    })
+  }))
+  attr(out, "Sym") <- s
+  return(out)
+})
 ## @knitr Add Simple Moving Averages
-dat %<>% lapply(wind = c(wind,200) , function(l, wind){
+
+dat %<>% lapply(wind = sma.wind , function(l, wind){
   att <- attr(l, "Sym")
   if (all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > wind) ) {
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", attr(l, "Sym")," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -23,8 +81,10 @@ dat %<>% lapply(wind = c(wind,200) , function(l, wind){
     colnames(out_sma) <- paste("SMA", wind[sum(!is.na(l[,"close"])) > wind], sep = ".")
     if (stringr::str_which(names(l), "SMA\\.\\d{1,2}") %>% length > 0) l <- l[,-stringr::str_which(names(l), "SMA\\.\\d{1,2}")]
     
- message(paste0(attr(l, "Sym"),": SMA"))
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l, out_sma) else out <- tibbletime::tbl_time(cbind.data.frame(l, out_sma), index = "Time")
+ message(paste0(att,": SMA"))
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l, out_sma) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, out_sma), index = !!td_nm)}
     attr(out, "Sym") <- att
     } else out <- l
   return(out)
@@ -33,17 +93,21 @@ dat %<>% lapply(wind = c(wind,200) , function(l, wind){
 dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
+  wind <- wind[sum(!is.na(l[,"close"])) > wind * 2]
   if (all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > wind) ) {
     if (verbose) print(att)
-    adx <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], l = l, env = parent.env(), function(.x, l, env){
+    adx <- purrr::map(.x = wind, l = l, env = parent.env(), function(.x, l, env){
       if (verbose) print(.x)
-      out <- TTR::ADX(l[,c("high","low","close")],n = .x)
+      out <- TTR::ADX(l[,c("high","low","close")], n = .x)
       return(out)
     })
     adx <- do.call("cbind", adx) %>% na.locf(fromLast = T)
-    colnames(adx) <- paste(colnames(adx), rep(wind[sum(!is.na(l[,"close"])) > wind], each =4 ), sep = ".")
+    colnames(adx) <- paste(colnames(adx), rep(wind, each = 4), sep = ".")
     if (stringr::str_which(names(l),"ADX|DI\\w?|DX|DX\\w.*\\d{1,2}?\\.?\\d{1,2}?$") %>% length > 0) l <- l[,-c(stringr::str_which(names(l),"ADX|DI\\w?|DX|DX\\w.*\\d{1,2}?\\.?\\d{1,2}?$"))]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l, adx) else out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l, adx) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": ADX"))
   }
@@ -55,9 +119,10 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
 dat %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, function(l, threshold1, threshold2, wind, verbose){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
+  wind <- wind[sum(!is.na(l[,"close"])) > wind * 2]
   if (magrittr::not(all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > wind) & any(stringr::str_detect(names(l),"^DX")))) return(l)
     out <- list()
-    for (i in seq_along(wind[sum(!is.na(l[,"close"])) > wind])) {
+    for (i in seq_along(wind)) {
       cls <- c(paste0(c("ADX.","DIp.","DIn.","DX.","SMA."), wind[i]),"close")
       if (verbose) print(cls)
       out[[i]] <- apply(l[,cls], 1, function(r, env = parent.frame()){
@@ -75,7 +140,7 @@ dat %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, func
       })
     }
   
-  if (length(wind[sum(!is.na(l[,"close"])) > wind]) > 1) nms <- paste0("ADX.", wind[sum(!is.na(l[,"close"])) > wind], "_i") else nms <- "ADX_i"
+  if (length(wind) > 1) nms <- paste0("ADX.", wind, "_i") else nms <- "ADX_i"
   if (xts::is.xts(l)) {
   out <- do.call("cbind", out) %>% xts(order.by = time(l))
   if (verbose) print(list(xtsAttributes(l), Data = out))
@@ -83,7 +148,8 @@ dat %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, func
   out <- cbind.xts(l, out)} else {
     out <- do.call("cbind", out)
     colnames(out) <- nms
-    out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = "Time")
+    td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+    out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!td_nm)
   }
   attr(out, "Sym") <- att
   message(paste0(attr(l, "Sym"),": ADX_i"))
@@ -96,8 +162,9 @@ dat %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, func
 dat %<>% lapply(wind = wind, compress = T, function(l, wind, compress){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
+  wind <- wind[sum(!is.na(l[,"close"])) > wind * 2]
   if (all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > wind) & any(stringr::str_detect(names(l),"ADX")) ) {
-    adx <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], env = parent.frame(), function(.x, env){
+    adx <- purrr::map(.x = wind, env = parent.frame(), function(.x, env){
       out <- TTR::ADX(l[,c("high","low","close")], .x) %>% na.locf(fromLast = T)
       if (compress) {
         out <- apply(out, 1, function(r){
@@ -114,7 +181,10 @@ dat %<>% lapply(wind = wind, compress = T, function(l, wind, compress){
       l <- l[,-c(stringr::str_which(names(l),"\\w?DI|\\w?DX\\w?\\.?\\d{1,2}?\\.?\\d{1,2}?$"))]
       l <- l[,-c(stringr::str_which(names(l),"\\w?DI|\\w?DX\\w?\\.?\\d{1,2}?$"))]
     }
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l, adx) else out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l, adx) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = !!td_nm)
+      }
     attr(out, "Sym") <- att
     message(paste0(attr(l, "Sym"),": ADXc"))
   }
@@ -143,7 +213,10 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     WpR <- do.call("cbind", WpR)
     colnames(WpR) <- paste("WpR", wind[sum(!is.na(l[,"close"])) > wind], sep = ".")
     if (stringr::str_which(names(l),"^WpR\\.\\d{1,2}") %>% length > 0) l <- l[,-c(stringr::str_which(names(l),"^WpR\\.\\d{1,2}"))]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l, WpR) else out <- tibbletime::tbl_time(cbind.data.frame(l, WpR), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l, WpR) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, WpR), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": WpR"))
     
@@ -153,8 +226,9 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
 dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
+  wind <- wind[sum(!is.na(l[,"close"])) > wind]
   if (all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > wind) ) {
-    rsic <- purrr::map(wind[sum(!is.na(l[,"close"])) > wind], l = l, function(.x, l){
+    rsic <- purrr::map(wind, l = l, function(.x, l){
       out <- TTR::RSI(l[,c("close")], n = .x)
       out <- na.locf(out, fromLast = T)
       return(out)
@@ -163,7 +237,10 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     rsic <- do.call("cbind", rsic)
     colnames(rsic) <- paste("rsi", wind, sep = ".")
     if (grep("^rsi\\.\\d{1,2}$",names(l)) %>% length > 0) l <- l[, -grep("^rsi\\.\\d{1,2}$",names(l))]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l,rsic) else out <- tibbletime::tbl_time(cbind.data.frame(l,rsic), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l,rsic) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l,rsic), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": RSI"))
   } else out <- l
@@ -171,13 +248,19 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
 })
 
 ## @knitr Add RSI Indicator
-dat %<>% lapply(wind = wind, threshold1 = c(high = 70, low = 30), threshold2 = c(high = 80, low = 20), verbose = F, function(l, wind, threshold1, threshold2, verbose){
+dat %<>% lapply(wind = wind, threshold1 = c(high = 70, low = 30), threshold2 = c(high = 80, low = 20), verbose = F, sma.wind = sma.wind, function(l, wind, threshold1, threshold2, sma.wind, verbose){
   att <- attr(l, "Sym") 
  if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
+  wind <- wind[sum(!is.na(l[,"close"])) > wind]
   if (magrittr::not(all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > wind)) ) return(l)
     out <- list()
-    for (i in seq_along(wind[sum(!is.na(l[,"close"])) > wind])) { # Up to the second to last window
-      cls <- c(paste0(c("rsi."), wind[i]), "SMA.200","close")
+    
+    for (i in seq_along(wind)) { # Up to the second to last window
+      if(any(stringr::str_detect(names(l), paste0("SMA.",sma.wind[length(sma.wind)])))) {
+        cls <- c(paste0(c("rsi."), wind[i]), paste0("SMA.",sma.wind[length(sma.wind)]),"close")
+      } else {
+        cls <- c(paste0(c("rsi."), wind[i]),"close")
+      }
       out[[i]] <- apply(l[,cls], 1, function(r, env = parent.frame()){
         if (any(is.na(r))) {return(0)} # Check for NA and return none if present
         if (r[[cls[1]]] < threshold1["low"] & r[[cls[2]]] < r[["close"]] ) {
@@ -197,7 +280,10 @@ dat %<>% lapply(wind = wind, threshold1 = c(high = 70, low = 30), threshold2 = c
     colnames(out) <- nms
     if (verbose == T) print(identical(time(out), time(l)))
     if (grep("^rsi.*i$",names(l)) %>% length > 0) l <- l[,-grep("^rsi.*i$",names(l))]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l, out) else out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l, out) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": RSI_i"))
     if (verbose == T) print(nrow(out))
@@ -212,7 +298,7 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     roc <- purrr::map(.x = wind[sum(!is.na(l[,"close"])) > wind], env = parent.frame(),function(.x, env){
       roc <- TTR::ROC(l[,c("close")],n = .x)
       for (i in which(is.na(roc))) {
-        roc[i + 1] <- diff(log(l[,c("close"), drop = T]),i)[i + 1]
+        roc[i + 1] <- TTR::ROC(l[,c("close"), drop = T],i)[i + 1]
       }
       roc[1] <- 0
       return(roc)
@@ -221,7 +307,7 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     mom <- purrr::map(wind[sum(!is.na(l[,"close"])) > wind], env = parent.frame(), function(.x, env){
       mom <- TTR::momentum(l[,c("close")], n = .x)
       for (i in which(is.na(mom))) {
-        mom[i + 1] <- diff(l[,c("close"), drop = T],i)[i + 1]
+        mom[i + 1] <- TTR::momentum(l[,c("close"), drop = T],i)[i + 1]
       }
       mom[1] <- 0
       return(mom)
@@ -233,7 +319,10 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     colnames(roc) <- paste("roc", wind[sum(!is.na(l[,"close"])) > wind], sep = ".")
     colnames(mom) <- paste("mom", wind[sum(!is.na(l[,"close"])) > wind], sep = ".")
     if (grep("^roc|^mom",names(l)) %>% length > 0) l <- l[,-grep("^roc|^mom",names(l))]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l, roc, mom) else out <- tibbletime::tbl_time(cbind.data.frame(l, roc, mom), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l, roc, mom) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, roc, mom), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": ROC & MOM"))
   } else out <- l
@@ -256,7 +345,10 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     atrs <- do.call("cbind", atrs)
     out <- cbind(atrs[,c(atrs %>% colnames %>% grep("atr",.), atrs %>% colnames %>% grep("trueLow\\.\\d{1,3}?",.))])
     if (grep("atr|trueLow",names(l)) %>% length > 0) l <- l[,-grep("atr|trueLow",names(l))]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l, out) else out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l, out) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": ATR"))
   
@@ -270,7 +362,10 @@ dat %<>% lapply(verbose = F, function(l, verbose){
     sar <- TTR::SAR(quantmod::HLC(l), accel = c(0.05, 0.2))
     if (verbose) any(is.na(sar)) %>% print
     if (grep("sar", names(l), ignore.case = T) %>% length > 0) l <- l[, -grep("sar", names(l), ignore.case = T)]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l,sar) else out <- tibbletime::tbl_time(cbind.data.frame(l,sar), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l,sar) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l,sar), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": SAR"))
   } else out <- l
@@ -302,7 +397,10 @@ dat %<>% lapply(verbose = F, function(l, verbose){
     out <- na.locf(out, fromLast = T)
     if (verbose) any(is.na(out)) %>% print
     if (grep("sar_i\\.?\\d?", names(l), ignore.case = T) %>% length > 0) l <- l[, -grep("sar_i\\.?\\d?", names(l), ignore.case = T)]
-    if (xts::is.xts(l)) out <- xts::cbind.xts(l,sar_i = out) else out <- tibbletime::tbl_time(cbind.data.frame(l,sar_i = out), index = "Time")
+    if (xts::is.xts(l)) out <- xts::cbind.xts(l,sar_i = out) else {
+      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l,sar_i = out), index = !!td_nm)
+      }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": sar_i"))
     
@@ -312,7 +410,7 @@ dat %<>% lapply(verbose = F, function(l, verbose){
 ## @knitr Add MACD Compressed
 dat %<>% purrr::map(wind = wind, function(.x, wind){
   att <- attr(.x, "Sym")
-  if (length(wind[sum(!is.na(.x[,"close"])) > wind]) < 1) {
+  if (length(wind[sum(!is.na(.x[,"close"])) > wind * 2]) < 1) {
     warning(paste0("At least one window value must be fewer than the number of observations in the data for ", att,", returning as is"))
     return(.x)
   }
@@ -321,8 +419,7 @@ dat %<>% purrr::map(wind = wind, function(.x, wind){
     warning("NAs present in high low close, returning as is")
     return(.x)
     }
-  wind <- wind[sum(!is.na(.x[,"close"])) > wind]
-  message(wind)
+  wind <- wind[sum(!is.na(.x[,"close"])) > wind * 2]
 macd_dif <- purrr::map(wind, env = parent.frame(), l = .x, function(.x, l, env){
   macd <- TTR::MACD(quantmod::Cl(l), nFast = round(.x / 2, 0), nSlow = .x, nSig = round(.x / 2 * .75, 0), maType = TTR::EMA)
   macd[,"macd"] %<>%  na.locf(fromLast = T)
@@ -337,7 +434,9 @@ macd_dif <- purrr::map(wind, env = parent.frame(), l = .x, function(.x, l, env){
   
     if (xts::is.xts(.x)) macd_dif <- xts::as.xts(macd_dif) else macd_dif <- as.data.frame(macd_dif)
      
-    if (xts::is.xts(.x)) out <- xts::cbind.xts(.x, macd_dif) else out <- tibbletime::tbl_time(cbind.data.frame(.x, macd_dif), index = "Time")
+    if (xts::is.xts(.x)) out <- xts::cbind.xts(.x, macd_dif) else {
+      td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(.x, macd_dif), index = !!td_nm)}
     attr(out, "Sym") <- att
     message(paste0(att,": MACD"))
   return(out)
@@ -349,14 +448,45 @@ dat %<>% purrr::map(function(.x){
   }
     return(.x)
 })
+## @knitr Add Ultimate Oscillator
+dat %<>% purrr::map(wind = wind, function(.x, wind){
+  att <- attr(.x, "Sym")
+  if (nrow(.x) < {max(wind) * 4}) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
+  wind.df <- purrr::map_dfc(wind, function(.x){
+    out <- c(.x, .x * 2, .x * 4)
+  })
+  uo <- try({
+    uo <- purrr::map(.x = wind.df, l = .x, function(.x, l){
+      if (all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > max(.x)) ) {
+        out <- TTR::ultimateOscillator(l[,c("high","low","close")], n = .x)
+      } else out <- NULL
+      return(out)
+    })
+  }) %>% purrr::keep(~!is.null(.))
+  if (length(uo) < 1) return(.x)
+  uo <- do.call("cbind", uo) %>% na.locf(fromLast = T)
+  colnames(uo) <- paste("UO", wind[purrr::map_lgl(wind.df, l = .x, function(.x, l){
+    all(nrow(l) > .x)
+  })], sep = ".")
+  if (stringr::str_which(names(.x),"UO\\.\\d{1,3}") %>% length > 0) .x <- .x[,-c(stringr::str_which(names(.x),"UO\\.\\d{1,3}"))]
+  if (xts::is.xts(.x)) out <- xts::cbind.xts(.x, uo) else {
+    td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+    out <- tibbletime::tbl_time(cbind.data.frame(.x, uo), index = !!td_nm)
+  }
+  attr(out, "Sym") <- att 
+  message(paste0(att,": UO"))
+  return(out)
+})
+
+#TODO If duplicates from na.locf are greater than 5% of the total data then take the columns with < 5% duplicated and remove duplicated rows.
 
 # Name check, needs a paste function with all of the naming conventions to really be accurate
-nms <- c("high", "low", "volume", "open", "close", "changePercent", paste0(rep(c("SMA"),each = length(wind)),".", c(wind,200)), paste0(rep(c("ADX"),each = length(wind)),".", wind, "_i"), paste0(rep(c("ADXc"),each = length(wind)),".", wind), paste0(rep(c("WpR"),each = length(wind)),".", wind), paste0(rep(c("rsi"),each = length(wind)),".", wind), paste0(rep(c("rsi"),each = length(wind)),".", wind, "_i"), paste0(rep(c("roc", "mom"),each = length(wind)),".", wind), paste0(rep(c("atr", "trueLow"),each = length(wind)),".", wind), "sar", "sar_i", paste0("macd.",wind,".",round(wind / 2, 0),".",round(wind / 2 * .75, 0)), "Dec_date")
+nms <- c("high", "low", "volume", "open", "close", "changePercent", paste0(rep(c("SMA"),each = length(sma.wind)),".", sma.wind), paste0(rep(c("ADX"),each = length(wind)),".", wind, "_i"), paste0(rep(c("ADXc"),each = length(wind)),".", wind), paste0(rep(c("WpR"),each = length(wind)),".", wind), paste0(rep(c("rsi"),each = length(wind)),".", wind), paste0(rep(c("rsi"),each = length(wind)),".", wind, "_i"), paste0(rep(c("roc", "mom"),each = length(wind)),".", wind), paste0(rep(c("atr", "trueLow"),each = length(wind)),".", wind), "sar", "sar_i", paste0("macd.",wind,".",round(wind / 2, 0),".",round(wind / 2 * .75, 0)), "Dec_date")
 purrr::map(dat, nms = nms, function(.x, nms){
-  att <- attr(l, "Sym")
-  num <- which(!c(nms, paste0(nms,"_ind")) %in% names(.x))
-  if(length(num) > 0) {message(paste0(att, ": NAME CHECK | Missing names are:", c(nms, paste0(nms,"_ind"))[num]))}
-})
+  att <- attr(.x, "Sym")
+  num <- which(!c(nms) %in% names(.x))
+  if(length(num) > 0) {message(paste0(att, ": NAME CHECK | Missing names are:", paste0(c(nms)[num], collapse = ", ")))}
+  })
 ## @knitr Add Ephemeris Data
 # Re-add Attributes
 dat <- purrr::map2(.x = dat, .y = names(dat), function(.x, .y){
