@@ -643,6 +643,19 @@ purrr::map2(.x = Positions_ts, .y = names(Positions_ts), function(.x, .y){
 ```
 
 
+```{r 'Restoring Discrepancies in recent_prices'}
+bymin <- list.files(path = "PositionData", pattern = "bymin", full.names = T) %>% purrr::imap(fT = function(time, Time) {
+  message(length(time))
+  message(sum(is.na(Time)))
+  message(sum(is.na(time)))
+ out <- append(as.character(time[!is.na(time)]), as.character(Time[!is.na(Time)]))
+  lubridate::ymd_hms(out)
+}, .f = function(.x, .y, fT) {
+  out <- read.csv(.x) %>% mutate(time = fT(time,Time)) %>% select(- Time)
+  readr::write_csv(out, path = .x, col_names = T)
+  })
+```
+
 
 # Generic Fn to add all Signals and Response Variables
 
@@ -659,6 +672,14 @@ rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exp
 dat %>% assign("Positions_ts_iv", . , envir = globalenv()) 
 #Save
 rstudioapi::setCursorPosition(SL)
+> 
+
+
+read_csv
+
+
+
+
 ```
 
 ```{r 'Trim Positions_ext with IVs back to Positions_ts length'}

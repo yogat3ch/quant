@@ -8,7 +8,7 @@ params$paths <- list(Positions_tsl = "~/R/Quant/Positions_tsl2019-07-18.Rdata",
                      Positions_ts = "~/R/Quant/Positions_ts_rv_iv2015-07-27_2019-07-16.Rdata",
                      Positions_new = "~/R/Quant/Positions_new.Rdata")
 
-params$Orders_cols <- c(Platform= 'c',id= 'c',client_order_id= 'c',created_at= 'T' ,updated_at= 'T',submitted_at= 'T',filled_at= 'T',expired_at= 'T',canceled_at= 'T' ,failed_at= 'T',asset_id= 'c',symbol= 'c',asset_class= 'c',qty= 'd',filled_qty='d' ,filled_avg_price= 'd',order_type= 'c',type= 'c',side= 'c',time_in_force= 'c',limit_price= 'd',stop_price= 'd',status= 'c',CB= 'd',GL= 'd',TSL= 'c',live= 'l',SID ='c')
+params$Orders_cols <- c(Platform= 'c',id= 'c',client_order_id= 'c',created_at= 'T' ,updated_at= 'T',submitted_at= 'T',filled_at= 'T',expired_at= 'T',canceled_at= 'T' ,failed_at= 'T',asset_id= 'c',symbol= 'c',asset_class= 'c',qty= 'd',filled_qty='d' ,filled_avg_price= 'd',order_type= 'c',type= 'c',side= 'c',time_in_force= 'c',limit_price= 'd',stop_price= 'd',status= 'c',extended_hours = 'l', CB= 'd',GL= 'd',TSL= 'c',live= 'l',SID ='c')
 
 params$TSLvars <- append(expand.grid(.retro = c(1,2,4,12), .hilop = seq(.5,.9,.1)) %>% purrr::pmap( function(.retro,.hilop){list(tslret = list(retro = lubridate::weeks(.retro), hilop = .hilop))}),expand.grid(.retro = c(1,2,4,12), .m = c(1,1.5,2,2.5)) %>% purrr::pmap( function(.retro,.m){list(tslsd = list(retro = lubridate::weeks(.retro), m = .m))})) %>% append(seq(.04,.24,.02) %>% setNames(rep("tslp",length(.))) %>% as.list %>% purrr::map(~c(tslp = .x)))
 names(params$TSLvars) <- purrr::map(params$TSLvars, .f = function(.x){
