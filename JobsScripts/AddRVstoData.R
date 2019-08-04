@@ -64,7 +64,19 @@ dat %>% lapply(TSLvars = params$TSLvars, add = add, clm.nms = clm.nms, verbose =
     
   } else out <- l
   attr(out, "Sym") <- s
-  readr::write_csv(out, path = paste0("~/R/Quant/PositionData/",s , paste0(dates, collapse = "_"), "_rv.csv"), col_names = T)
+    .a_f <- list.files("~/R/Quant/PositionData", pattern = s, full.names = T)
+    .rvs <- .a_f[.a_f %>% stringr::str_which("rv\\.csv$")]
+    if (HDA::go(.rvs)){
+      .rv_data <- purrr::map(.rvs, ~ readr::read_csv(.x))
+      purrr::map(.rvs, ~ file.remove(.x))
+      .rv_data <- append(.rv_data, out)
+      out <- data.table::rbindlist(.rv_data) %>% subset(subset = !duplicated(.[["time"]]))
+    } else out <- NULL
+    if (HDA::go(out)) { 
+      #.a_f[.a_f %>% stringr::str_which("rv\\.csv$")] %>% purrr::walk( ~ file.remove(.x))
+      write_csv(out, path = paste0("~/R/Quant/PositionData/",s , min(out[[td_nm]]) %>% lubridate::as_date(), "_", max(out[[td_nm]]) %>% lubridate::as_date(), "_rv.csv"))
+    }
+  
   return(out)
 })
 # Re add attributes
