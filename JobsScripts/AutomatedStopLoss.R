@@ -192,60 +192,6 @@ for (l in seq_along(sell_updates)) {
   }
 }
 
-#End link buy and sell orders and calculate Gain Loss (GL)
- #----------------------- Fri Jul 12 08:46:50 2019 ------------------------#
-
-# ----------------------- Thu Jul 04 10:20:06 2019 ------------------------#
-# Get and update the recent prices
-# For each position: 
-#1. get the recent prices 
-#1.5 calculate the changePercent and add that in
-#2. write that data to the hd in a cumulative fashion
-
-
-
-recent_prices <- apply(open_positions, 1, function(r){
-  by_min <- get_bars(r[["symbol"]], from = lubridate::today(), timeframe = "minute")[[1]]
-    # Add change percent
-    by_min[["changePercent"]] <- c(0,zoo::rollapply(by_min, width = 2, function(r){
-      (as.numeric(r[2, "close", drop = T]) - as.numeric(r[1, "close", drop = T])) / as.numeric(r[1, "close", drop = T])
-    }, by.column = F))
-    # Get the previously stored data
-    try(bars <- readr::read_csv(file = paste0("~/R/Quant/PositionData/",r[["symbol"]],"_bymin.csv")) %>% mutate_at(vars(Time), funs(lubridate::as_datetime)))
-    # If the data exists, then combine it
-    go_bind <- tryCatch({is.data.frame(bars)} ,
-                        error = function(cond) {
-                          message("Here's the original error message:")
-                          message(cond)
-                          return(F)
-                        })
-    
-    if (go_bind) bars <- unique(bind_rows(by_min, bars)) else bars <- by_min
-    readr::write_csv(bars, path = paste0("~/R/Quant/PositionData/",r[["symbol"]],"_bymin.csv"), col_names = T)
-    # This operation is too expensive. Data repository will need to reside locally.
-    # # on Fridays update the google sheet
-    # historical <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1VG4SSYfxAdyekhSJWlQw4t3S53g_tYCnrL74DfEdGU8/edit#gid=0")
-    # # If no spreadsheet exists to contain the data, create one
-    # if (!any(stringr::str_detect(googlesheets::gs_ws_ls(historical), r[["symbol"]]))) {
-    #   googlesheets::gs_ws_new(historical, ws_title = r[["symbol"]], col_extent = length(bars))
-    #   historical <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1VG4SSYfxAdyekhSJWlQw4t3S53g_tYCnrL74DfEdGU8/edit#gid=0")
-    #   anchor <- 1
-    # } else {
-    #   # otherwise read the existing data
-    #   gs_bars <- googlesheets::gs_read(historical, ws = r[["symbol"]])
-    #   # Add the data to the sheet
-    #   hist_bars <- rbind(gs_bars, bars) # combine existing data to new data
-    #   hist_bars <- hist_bars[!duplicated(hist_bars), ] # remove duplicated
-    #   anchor <- nrow(gs_bars + 1)
-    # }
-    # go_add <- try(is.data.frame(hist_bars))
-    # if (go_add) input <- hist_bars else input <- bars
-    # 
-    # googlesheets::gs_edit_cells(historical, ws = r[["symbol"]], input = input, anchor = paste0("A", anchor))
-  return(bars)
-}) %>% setNames(nm = open_positions$symbol)
-#End get recent prices and update the repository
- #----------------------- Fri Jul 12 09:05:15 2019 ------------------------#
 
 
 # ----------------------- Thu Jul 04 10:23:53 2019 ------------------------#
@@ -254,9 +200,9 @@ recent_prices <- apply(open_positions, 1, function(r){
 # @return The modified Position_tsl 
 # for Debugging
 .orders <- googlesheets::gs_read(gs, ws = "Orders", col_types = params$Orders_cols) %>% dplyr::filter(Platform == "A")
-list(.r_p = recent_prices[names(open_shares)], .o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
+list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
 
-purrr::pmap(list(.r_p = recent_prices[names(open_shares)], .o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)], .f = function(.r_p, .o_p, .orders){
+purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)], .f = function(.r_p, .o_p, .orders){
   
   # Retrieve unsold buy positions from Positions_tsl & by the symbol, which API (live or not), and TSL types and respective open shares associated with each
   tsl_orders_cumshares <- .orders %>% filter(side == "buy" & status == "filled" & qty_remain > 0) %>% group_by(symbol, live, TSL) %>% summarize(TSL_shares = sum(qty_remain)) 
