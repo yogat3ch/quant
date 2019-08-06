@@ -200,45 +200,91 @@ for (l in seq_along(sell_updates)) {
 # @return The modified Position_tsl 
 # for Debugging
 .orders <- googlesheets::gs_read(gs, ws = "Orders", col_types = params$Orders_cols) %>% dplyr::filter(Platform == "A")
-list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
+list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]) %>% purrr::map(1) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
 
-purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)], .f = function(.r_p, .o_p, .orders){
+purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)], TSLvars = params$TSLvars, .f = function(.o_p, .orders, TSLvars){
   
-  # Retrieve unsold buy positions from Positions_tsl & by the symbol, which API (live or not), and TSL types and respective open shares associated with each
-  tsl_orders_cumshares <- .orders %>% filter(side == "buy" & status == "filled" & qty_remain > 0) %>% group_by(symbol, live, TSL) %>% summarize(TSL_shares = sum(qty_remain)) 
+  
   # Get all previous stop losses
-  prev_tsl <- .orders %>% filter(side == "sell" & stringr::str_detect(status, "new|open")) %>% mutate(cum.shares = cumsum(qty_remain))
-  # Get the current price
-  price <- AlpacaforR::get_poly_last_price(ticker = .o_p$symbol)
-  #TODO 
-    set_tsl <- .orders %>% filter(side == "buy" & status == "filled" & qty_remain > 0) %>% mutate(cum.shares = cumsum(qty_remain))
-    
-  if (nrow(set_tsl) > 0) { # if there are new buy orders for which tsl need to be set
-      for (i in 1:nrow(set_tsl)) { # loop along the rows of set_tsl
-      purrr::pmap_dfr(list(.s = set_tsl$symbol[i], .c_a = set_tsl$created_at[i], .q = set_tsl$qty_remain[i], .p = set_tsl$filled_avg_price[i], .tsl = set_tsl$TSL[i], .live = set_tsl$live[i]), r_p = recent_prices, tslv = params$TSLvars, function(.s, .c_a, .q, .p, .tsl, .live, r_p, tslv){
-        #TODO calculate stop loss here. Calculation of stop loss will require a pre-allocated price data.frame of at most 84 days prior
-      tsl_amt <- attr(tslv, "tsl_amt")
-      if (stringr::str_detect(.tsl, "tslsd")) {
-        .args <- tslv[[.tsl]]
-        stoploss <- tsl_amt()
-      } else if (stringr::str_detect(.tsl, "tslret")) {
-        retro <- tslv[[.tsl]]
-        stoploss <- r_p[[.s]] %>% filter(Time >= {max(r_p[[.s]][["Time"]]) - lubridate::days(retro[1])}) %>% .[["close"]] %>% range() %>% diff() %>% {. * retro[2]}
-      } else if (stringr::str_detect(.tsl, "tslp")) {
-        stoploss <- .p * tslv[[.tsl]]
-      }
-      stopprice <- .p - stoploss
-        # Place the order
-      TSL_placed <- AlpacaforR::submit_order(ticker = .s, qty = .q, side = "sell", type = "stop", time_in_force = "gtc", stop_price = stopprice, live = .live) %>% AlpacatoR_order_mutate()
-        
-    })
+  prev_tsl <- .orders %>% dplyr::filter(side == "sell" & stringr::str_detect(status, "new|open")) %>% dplyr::mutate(cum.shares = cumsum(qty_remain))
+  #TODO(Cancel all open stop losses)
+  
+  # ----------------------- Mon Aug 05 16:47:38 2019 ------------------------#
+  # Update local data
+  # Get the Historical Data filename from the HD
+  local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.o_p$symbol,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
+  if (HDA::go(local_fn)) {
+  # Get the last bar recorded
+  last_bar <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}")[[1]] %>% lubridate::ymd() %>% max() 
+  # Load the historical data
+  .data <- readr::read_csv(file = local_fn)
+  # Get the column with the date or time
+  td_nm <- stringr::str_extract(colnames(.data), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
+  # If it's uppercase from earlier versions convert it to lower
+  if (grepl("T", td_nm)) {
+    n.td_nm <- tolower(td_nm)
+    .data %<>% dplyr::rename(!!n.td_nm := !!td_nm)
   }
+  # Get the columns corresponding to the get_bars call
+  .data %<>% dplyr::select("time", "open", "high", "low", "close", "volume")
+  
+  } else last_bar <- lubridate::today() - lubridate::weeks(12) # If theres no data then set the previous date to 1 quarter ago
+  # Retrieve the updated data
+  new_bars <- AlpacaforR::get_bars(ticker = .o_p$symbol, from = last_bar, to = lubridate::today())[[1]]
+  if (HDA::go(.data)) { # if the data exists on the HD
+    # Combine it with the new data
+    new_data <- rbind.data.frame(.data[ - nrow(.data), ], new_bars)
+  } else new_data <- new_bars # If it doesn't just make the new_data
+  # Save the new data
+  readr::write_csv(new_data,  path = paste0("~/R/Quant/PositionData/",.o_p$symbol, min(new_data[["time"]]),"_", max(new_data[["time"]]), ".csv"))
+  # Delete the old data
+  if (HDA::go(local_fn)) file.remove(local_fn)
+  # End update local data
+   #----------------------- Mon Aug 05 16:48:04 2019 ------------------------#
+   
+  # Retrieve unsold buy positions from Positions_tsl & by the symbol, which API (live or not), and TSL types and respective open shares associated with each
+  tsl_orders_cumshares <- .orders %>% dplyr::filter(side == "buy" & status == "filled" & qty_remain > 0) %>% dplyr::group_by(symbol, live, TSL) %>% dplyr::summarize(TSL_shares = sum(qty_remain)) 
+  
+  
+    
+  if (nrow(tsl_orders_cumshares) > 0) { # if there are new buy orders for which tsl need to be set
+    for (i in 1:nrow(tsl_orders_cumshares)) {
+    # Retrieve the orders themselves (such that the data can be filtered according to when the purchase was made)
+    tsl_orders <- .orders %>% dplyr::filter(side == "buy" & status == "filled" & qty_remain > 0 & TSL == dplyr::ungroup(tsl_orders_cumshares)[i, "TSL", drop = T])
+    tsl_orders$peaks <- purrr::map_dbl(tsl_orders$filled_at, .new_data = new_data, function(.x, .new_data) {
+      .new_data %>% dplyr::filter(time >= .x) %>% .[["high"]] %>% max
+    })
+    # group by tsl type, live, and the peaks
+    tsl_orders %<>% dplyr::group_by(TSL, live, peaks) %>% dplyr::summarise(qty = sum(qty)) %>% dplyr::ungroup()
+    if (any(stringr::str_detect(tsl_orders$TSL, "^tslp"))) {
+    # find the peaks over the timeframes since the purchase (for tslp)
+    
+    tslp <- function(TSL, peaks) {
+      stringr::str_extract(TSL, "[\\d\\.]+") %>% as.numeric %>% {peaks - . * peaks}
+    }
+     tsl_orders %<>% dplyr::mutate(SL = tslp(TSL,peaks))
+      
+    } else {
+    # calculate tsl based on other types
+      tsl_orders %<>% dplyr::group_by(TSL, live) %>% dplyr::summarise(qty = sum(qty)) %>% dplyr::ungroup()
+      # Subtract the stop loss amounts from the peaks
+      tsl_orders$SL <- tsl_orders$peaks - purrr::pmap_dbl(tsl_orders, .data = new_data, TSLvars = TSLvars, function(TSL, live, qty, .data, TSLvars) {
+        tsl_amt <- attr(TSLvars, "tsl_amt")
+        .args <- TSLvars[TSL]
+        .args[[1]]$dtref <- lubridate::today()
+        tsl_amt(.data = .data, .args = .args)
+      })
+      }
+    # ----------------------- Mon Aug 05 21:44:04 2019 ------------------------#
+    #TODO Place orders with Alpaca API
+     
+    }
+    
 }
 
   
     
-    stoploss <- try(purrr::pluck(.z, .y, "stoploss")) #TODO needs to set these values for multiple open TSL types
-    stopprice <- try(purrr::pluck(.z, .y, "stopprice")) #TODO needs to set these values for multiple open TSL types
+   
     # If a previous stoploss has not been set for a given position
     if (!(HDA::go(prevTSLtime) & HDA::go(stopprice) & HDA::go(stoploss))) {
       TSL_placed <- purrr::pmap_dfr(tsl_orders_cumshares, TSLvars = params$TSLvars, price = AlpacaforR::get_poly_last_price(ticker = .y$symbol)$price, r_p = .x, function(.x, TSLvars, price, r_p){
