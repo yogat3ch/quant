@@ -21,7 +21,7 @@ names(params$TSLvars) <- purrr::map(params$TSLvars, .f = function(.x){
 
 attr(params$TSLvars, "tsl_amt") <- function(.data, .args, verbose = F){
   # Make the names simple for following if statements
-  tsl_type <- stringr::str_extract(names(.args)[1], stringr::regex("^\\w+"))
+  tsl_type <- stringr::str_extract(names(.args)[1], stringr::regex("^[A-Za-z]+"))
   .args <- .args[[1]]
   if (verbose) message(tsl_type)
   # Create a character index vector
@@ -70,6 +70,8 @@ attr(params$TSLvars, "tsl_amt") <- function(.data, .args, verbose = F){
         out <- range(new_df[,cl_nm[c("high","low","close")]] %>% unlist) %>% diff %>% {. * .args$hilop}
       }
     
+  } else if (tsl_type == "tslp") {
+    out <- {{.data %>% dplyr::filter(time >= .args$dtref) %>% .[["high"]] %>% max()} * .args$tslp}
   } 
   return(out)
 }
@@ -82,19 +84,19 @@ params$AlpacatoR_order_mutate <- function(l, tsl = '', live = '', ws = 0, wso = 
   #   as.numeric(stringr::str_replace_all(x, "\\$|\\,", ""))
   # }
   l[l %>% purrr::map_lgl(is.null)] <- NA
-  l %<>% as.data.frame %>% cbind.data.frame(data.frame(Platform = "A"), .)
+  l %<>% as.data.frame(stringsAsFactors = F) %>% cbind.data.frame(data.frame(Platform = "A"), ., stringsAsFactors = F)
   # Deprecated as of commit 83dacb1 on AlpacaforR
   # df <- dplyr::mutate_at(l, dplyr::vars(dplyr::ends_with("at")),~lubridate::ymd_hms(., tz = Sys.timezone()))
   # df <- dplyr::mutate_at(df, dplyr::vars(qty, filled_qty, filled_avg_price, limit_price, stop_price), ~toNum)
-  df <- dplyr::mutate_if(df, .predicate = ~is.character, ~trimws)
+  df <- dplyr::mutate_if(l, .predicate = ~is.character(.), ~trimws(.))
   if (df$side == "buy") {
     df %<>% mutate(CB = filled_qty * filled_avg_price + ws)
     if (ws > 0) {
-      df %<>% dplyr::mutate_at(dplyr::vars(order_type), list(~paste0(' ws:', wso)))
+      df %<>% dplyr::mutate_at(dplyr::vars(order_type), ~paste0(., ' ws:', wso))
     }
-    out <- cbind.data.frame(df, data.frame(GL = "", TSL = tsl, live = live, SID = "")) 
+    out <- cbind.data.frame(df, data.frame(GL = "", TSL = tsl, live = live, SID = "", stringsAsFactors = F), stringsAsFactors = F) 
   } else {
-    out <- cbind.data.frame(df, data.frame(CB = '', GL = '', TSL = tsl, live = live, SID = "")) %>% dplyr::mutate(qty_remain = filled_qty)
+    out <- cbind.data.frame(df, data.frame(CB = '', GL = '', TSL = tsl, live = live, SID = ""), stringsAsFactors = F) %>% dplyr::mutate(qty_remain = 0)
   }
   return(out)
 }
