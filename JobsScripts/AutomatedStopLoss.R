@@ -268,16 +268,25 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
     # calculate tsl based on other types
       tsl_orders %<>% dplyr::group_by(TSL, live) %>% dplyr::summarise(qty = sum(qty)) %>% dplyr::ungroup()
       # Subtract the stop loss amounts from the peaks
-      tsl_orders$SL <- tsl_orders$peaks - purrr::pmap_dbl(tsl_orders, .data = new_data, TSLvars = TSLvars, function(TSL, live, qty, .data, TSLvars) {
+      tsl_orders %<>% dplyr::mutate(SL = purrr::pmap_dbl(list(TSL, live, qty, peaks, filled_at), .data = new_data, TSLvars = TSLvars, function(TSL, live, qty, peaks, filled_at, .data, TSLvars) {
         tsl_amt <- attr(TSLvars, "tsl_amt")
         .args <- TSLvars[TSL]
-        .args[[1]]$dtref <- lubridate::today()
-        tsl_amt(.data = .data, .args = .args)
+        .args[[1]]$dtref <- filled_at
+        amt <- tsl_amt(.data = .data, .args = .args[1])
+        out <- peaks - amt
+        return(out)
       })
-      }
+      )
     # ----------------------- Mon Aug 05 21:44:04 2019 ------------------------#
     #TODO Place orders with Alpaca API
-     
+    tsl_final <- tsl_orders %>% dplyr::group_by(symbol, SL, live, TSL) %>% dplyr::summarise(qty = sum(qty))
+    submitted_orders <- purrr::pmap_dfr(list(symbol = tsl_final$symbol, SL = tsl_final$SL, live = tsl_final[["live"]], qty = tsl_final$qty, TSL = tsl_final$TSL), function(symbol, SL, live, qty, TSL) {
+      submitted_order <- AlpacaforR::submit_order(ticker = symbol, qty = qty, side = "sell", type = "stop", time_in_force = "gtc", stop_price = SL, live = live) %>% params$AlpacatoR_order_mutate(live = live, tsl = TSL)
+      })
+    
+    
+    
+    
     }
     
 }
@@ -301,7 +310,7 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
       }
         stopprice <- price - stoploss
       # Place the order
-        TSL_placed <- AlpacaforR::submit_order(ticker = .x$symbol, qty = .x$TSL_shares, side = "sell", type = "stop", time_in_force = "gtc", stop_price = stopprice, live = .x[["live"]])
+        TSL_placed <- 
         # Change NULL values to NA for coercion to data.frame
         TSL_placed[TSL_placed %>% purrr::map_lgl(is.null)] <- NA
         # Coerce to data.frame
