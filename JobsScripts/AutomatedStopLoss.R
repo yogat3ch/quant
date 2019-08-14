@@ -89,10 +89,10 @@ open_shares <- purrr::map2(.x = split(open_orders, open_orders$symbol), .y = spl
 }) %>% purrr::keep(~ .x > 0)
 # Get Alpaca Orders
 all_orders <- AlpacaforR::get_orders(status = "all") 
-# Get the positions from Alpaca
-open_positions <- get_positions(live = params$live)
+# Get the positions from Alpaca. Split it by the open shares according to the sheet, and name it according to those open_shares (such that the pmap below has named list items)
+open_positions <- AlpacaforR::get_positions(live = params$live) %>% split(., .[["symbol"]]) %>% .[names(open_shares)] %>% setNames(names(open_shares))
 # Get the subset of all Alpaca orders by symbol that googlesheets indicates are open
-A_open <- all_orders %>% filter(symbol %in% names(open_shares))
+A_open <- all_orders %>% dplyr::filter(symbol %in% names(open_shares))
 
 # Run to update all orders from Alpaca
 # all_orders %>% filter(status != "canceled") %>% rowwise() %>%  mutate(Platform = "A", CB = CB(filled_qty, filled_avg_price), GL = "", live = F) %>% select(Platform, dplyr::everything()) %>% googlesheets::gs_add_row(gs, ws = "Orders", input = .)
@@ -104,11 +104,11 @@ A_open <- all_orders %>% filter(symbol %in% names(open_shares))
 # Get all orders from the sheet not already linked to a sale, link them and calculate Gain Loss
 Orders_open <- Orders %>% dplyr::filter(Platform == "A" & (!is.character(SID) | qty_remain > 0))
 # #For debugging
-pmap_test <- list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]) %>% purrr::map(1) %>% list2env()
+pmap_test <- list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
 
-sell_updates <- purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .Ptsl = Positions_tsl[names(open_shares)], .o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]),addtl_cols = addtl_cols, tax = tax, .f = function(.o_p, .o_s, .a_o, .o_o, addtl_cols, tax){
+sell_updates <- purrr::pmap(list(.o_p = open_positions, .o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]), tax = tax, .f = function(.o_p, .o_s, .a_o, .o_o, tax){
   # If the open shares according to google sheets != the open positions according to Alpaca then sell orders must be reconciled
-if (.o_s != sum(.o_o$qty)) {
+if (.o_s != sum(.o_p$qty_remain)) {
   # Get the previous time at which the stop loss was set
   prev_tsl_time <- .a_o %>% arrange(desc(created_at)) %>% filter(side == "sell" & type == "stop") %>% .[1, "created_at"]
   # Get the alpaca sell orders that were filled since that last TSL was set
@@ -117,11 +117,8 @@ if (.o_s != sum(.o_o$qty)) {
   merge_by_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][-c(4:9, 14:15, 22)]
   update_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][c(4:9, 14:15, 22)]
   filled_tsl <- a_o_sell %>% left_join(.o_o %>% select(-update_nms), by = merge_by_nms) %>% select(Platform, everything())
-  filled_tsl$Platform <- "A"
-  # account for multiple filled tsl
-  for (i in seq_along(filled_tsl$id)) {
-    filled_tsl[i, addtl_cols] <- .o_o[.o_o$id == filled_tsl$id[i], addtl_cols]
-  }
+  
+  
   
   # ----------------------- Wed Jul 10 10:49:32 2019 ------------------------#
   # First In First Out Gain/Loss Calculation linking buys with sales
@@ -155,7 +152,11 @@ if (.o_s != sum(.o_o$qty)) {
     }
     # fill the sid for the sale orders
     filled_tsl[i, "SID"] <- filled_tsl$id[i]
-    b <- o_ns_buy %>% filter(stringr::str_detect(SID,stringr::coll(filled_tsl$id[i]))) # Filter for just the sold buy orders and remove the cum.shares 
+    b <- o_ns_buy %>% filter(stringr::str_detect(SID,stringr::coll(filled_tsl$id[i]))) # Filter for just the sold buy orders and remove the cum.shares
+    # Fill other values
+    filled_tsl$Platform <- "A"
+    filled_tsl$TSL <- unique(b$TSL)
+    filled_tsl$live <- unique(b$live)
     # ----------------------- Wed Jul 10 10:59:43 2019 ------------------------#
     # Map over the sold and buy orders by their matching SID
     e <- new.env()
@@ -173,6 +174,8 @@ if (.o_s != sum(.o_o$qty)) {
       })
     # update the values in B & filled_tsl for later updating of spreadsheet
     filled_tsl[i, c("GL", "qty_remain")] <- data.frame(GL = sum(b_df$GL), qty_remain = e$sq)
+    # Update CB
+    filled_tsl[i, "CB"] <- mean(b$CB)
     b[, c("GL", "qty_remain")] <- b_df
     sell_update[[1]] <- rbind.data.frame(filled_tsl, b %>% select(-cum.shares))
     } # for i loop over id
@@ -202,12 +205,14 @@ for (l in seq_along(sell_updates)) {
 .orders <- googlesheets::gs_read(gs, ws = "Orders", col_types = params$Orders_cols) %>% dplyr::filter(Platform == "A")
 list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]) %>% purrr::map(1) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
 
-purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)], TSLvars = params$TSLvars, .f = function(.o_p, .orders, TSLvars){
+purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]), TSLvars = params$TSLvars, gs = gs, .f = function(.o_p, .orders, TSLvars, gs){
   
   
   # Get all previous stop losses
   prev_tsl <- .orders %>% dplyr::filter(side == "sell" & stringr::str_detect(status, "new|open")) %>% dplyr::mutate(cum.shares = cumsum(qty_remain))
-  #TODO(Cancel all open stop losses)
+  # ----------------------- Wed Aug 14 08:27:38 2019 ------------------------#
+  # TODO Cancel all previous stop losses
+  
   
   # ----------------------- Mon Aug 05 16:47:38 2019 ------------------------#
   # Update local data
@@ -242,7 +247,7 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
   # End update local data
    #----------------------- Mon Aug 05 16:48:04 2019 ------------------------#
    
-  # Retrieve unsold buy positions from Positions_tsl & by the symbol, which API (live or not), and TSL types and respective open shares associated with each
+  # Retrieve unsold buy positions from Orders & by the symbol, which API (live or not), and TSL types and respective open shares associated with each
   tsl_orders_cumshares <- .orders %>% dplyr::filter(side == "buy" & status == "filled" & qty_remain > 0) %>% dplyr::group_by(symbol, live, TSL) %>% dplyr::summarize(TSL_shares = sum(qty_remain)) 
   
   
@@ -277,75 +282,21 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
         return(out)
       })
       )
-    # ----------------------- Mon Aug 05 21:44:04 2019 ------------------------#
-    #TODO Place orders with Alpaca API
     tsl_final <- tsl_orders %>% dplyr::group_by(symbol, SL, live, TSL) %>% dplyr::summarise(qty = sum(qty))
     submitted_orders <- purrr::pmap_dfr(list(symbol = tsl_final$symbol, SL = tsl_final$SL, live = tsl_final[["live"]], qty = tsl_final$qty, TSL = tsl_final$TSL), function(symbol, SL, live, qty, TSL) {
       submitted_order <- AlpacaforR::submit_order(ticker = symbol, qty = qty, side = "sell", type = "stop", time_in_force = "gtc", stop_price = SL, live = live) %>% params$AlpacatoR_order_mutate(live = live, tsl = TSL)
       })
-    
-    
-    
-    
-    }
-    
-}
-
-  
-    
-   
-    # If a previous stoploss has not been set for a given position
-    if (!(HDA::go(prevTSLtime) & HDA::go(stopprice) & HDA::go(stoploss))) {
-      TSL_placed <- purrr::pmap_dfr(tsl_orders_cumshares, TSLvars = params$TSLvars, price = AlpacaforR::get_poly_last_price(ticker = .y$symbol)$price, r_p = .x, function(.x, TSLvars, price, r_p){
-        tsl_type <- .x[["TSL"]] # Get the TSL type
-      # Set the stoploss based on the type
-      if (stringr::str_detect(tsl_type, "tsla")) {
-        tsla <- TSLvars[[tsl_type]]
-        stoploss <- tsla(r_p[["close"]])
-      } else if (stringr::str_detect(tsl_type, "retro")) {
-        retro <- TSLvars[[tsl_type]]
-        stoploss <- r_p %>% filter(Time >= {max(r_p[["Time"]]) - lubridate::days(retro[1])}) %>% .[["close"]] %>% range() %>% diff() %>% {. * retro[2]}
-      } else if (stringr::str_detect(tsl_type, "tslp")) {
-        stoploss <- price * TSLvars[[tsl_type]]
       }
-        stopprice <- price - stoploss
-      # Place the order
-        TSL_placed <- 
-        # Change NULL values to NA for coercion to data.frame
-        TSL_placed[TSL_placed %>% purrr::map_lgl(is.null)] <- NA
-        # Coerce to data.frame
-        TSL_placed %<>% as.data.frame %>% dplyr::mutate_at(dplyr::vars(dplyr::ends_with("at")), ~ lubridate::ymd_hms(., tz = Sys.timezone())) %>% dplyr::mutate_at(dplyr::vars(qty, filled_qty, filled_avg_price), ~toNum) %>% cbind.data.frame(TSL = tsl_type, live = .x[["live"]])
-      return(TSL_placed)
-      })
-      # If TSL_placed exists
-      if (HDA::go(.z[["TSL_placed"]])) {
-        # Add the TSL_placed to the existing rows otherwise create a new data.frame
-        .z[["TSL_placed"]] <- bind_rows(.z[["TSL_placed"]],TSL_placed)
-      } else .z[["TSL_placed"]] <- TSL_placed
-    } else if (HDA::go(prevTSLtime) & HDA::go(stopprice) & HDA::go(stoploss)) {
-      elapsed_ts <- .x %>% dplyr::filter(Time > prevTSLtime)
-      high_price <- max(elapsed_ts[["close"]])
-      low_price <- min(elapsed_ts[["close"]])
-      # If the stock has risen to a point where a new stop loss needs to be set
-      if(high_price - stoploss > stopprice) {
-        # Then calculate that new stoploss and set it, record that change
-        stopprice <- high_price - stoploss
-        placed <- AlpacaforR::submit_order(.y$symbol, qty = .y$qty, side = "sell", type = "stop", time_in_force = "gtc", stop_price = stopprice, live = live)
-      } else if (low_price < stopprice) {
-        # Instance where a sell is detected
-        
-      }
-     
-      .z[["prevTSLtime"]] <- lubridate::now()
-    
     }
-    
-    return(d)
-  })
+    # ----------------------- Mon Aug 12 10:59:30 2019 ------------------------#
+    # Add Orders to Googlesheet
+    apply(submitted_orders, 1, gs = gs, function(r, gs){
+      googlesheets::gs_add_row(gs, ws = "Orders", input = r)
+    })
+  }
+})
 
 
-
-save(Positions_tsl, file = params$paths$Positions_tsl)
 
 
 
