@@ -199,20 +199,30 @@ for (l in seq_along(sell_updates)) {
 
 # ----------------------- Thu Jul 04 10:23:53 2019 ------------------------#
 # Set the trailing stop losses 
-# Map over recent prices, the open positions, the Positions_tsl tracking list, open shares, and all orders
-# @return The modified Position_tsl 
-# for Debugging
-.orders <- googlesheets::gs_read(gs, ws = "Orders", col_types = params$Orders_cols) %>% dplyr::filter(Platform == "A")
-list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]) %>% purrr::map(1) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
+# Map open positions from Alpaca (already split), open shares from the sheet, and all orders from Alpaca
 
-purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_shares)], .orders = split(.orders, .orders$symbol)[names(open_shares)]), TSLvars = params$TSLvars, gs = gs, .f = function(.o_p, .orders, TSLvars, gs){
+Orders <- googlesheets::gs_read(gs, ws = "Orders", col_types = params$Orders_cols) %>% dplyr::filter(Platform == "A")
+
+# for Debugging
+list(.o_p = open_positions, .orders = split(Orders, Orders$symbol)[names(open_shares)]) %>% purrr::map(2) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
+
+
+
+
+
+purrr::pwalk(list(.o_p = open_positions, .orders = split(Orders, Orders$symbol)[names(open_shares)]), TSLvars = params$TSLvars, gs = gs, .f = function(.o_p, .orders, TSLvars, gs){
   
+  if(!HDA::go(.o_p)) return(NULL) 
   
-  # Get all previous stop losses
+  # Get all previous stop losses recorded in the sheet
   prev_tsl <- .orders %>% dplyr::filter(side == "sell" & stringr::str_detect(status, "new|open")) %>% dplyr::mutate(cum.shares = cumsum(qty_remain))
+  
   # ----------------------- Wed Aug 14 08:27:38 2019 ------------------------#
   # TODO Cancel all previous stop losses
-  
+  if (nrow(prev_tsl) > 0) {
+    
+  } 
+    
   
   # ----------------------- Mon Aug 05 16:47:38 2019 ------------------------#
   # Update local data
@@ -220,9 +230,10 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
   local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.o_p$symbol,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
   if (HDA::go(local_fn)) {
   # Get the last bar recorded
-  last_bar <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}")[[1]] %>% lubridate::ymd() %>% max() 
+    date_history <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}") %>% do.call("c", .) %>% lubridate::ymd()
+  last_bar <-  date_history %>% max() 
   # Load the historical data
-  .data <- readr::read_csv(file = local_fn)
+  .data <- readr::read_csv(file = local_fn[stringr::str_which(local_fn, as.character(last_bar))])
   # Get the column with the date or time
   td_nm <- stringr::str_extract(colnames(.data), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
   # If it's uppercase from earlier versions convert it to lower
@@ -231,7 +242,7 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
     .data %<>% dplyr::rename(!!n.td_nm := !!td_nm)
   }
   # Get the columns corresponding to the get_bars call
-  .data %<>% dplyr::select("time", "open", "high", "low", "close", "volume")
+  .data %<>% dplyr::select(!!n.td_nm, "open", "high", "low", "close", "volume")
   
   } else last_bar <- lubridate::today() - lubridate::weeks(12) # If theres no data then set the previous date to 1 quarter ago
   # Retrieve the updated data
@@ -242,8 +253,17 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
   } else new_data <- new_bars # If it doesn't just make the new_data
   # Save the new data
   readr::write_csv(new_data,  path = paste0("~/R/Quant/PositionData/",.o_p$symbol, min(new_data[["time"]]),"_", max(new_data[["time"]]), ".csv"))
+  # If previous files exist
+  if (HDA::go(local_fn) & length(local_fn) > 1) {
+    # Get the final bar times of the previous files
+    prev_filedates <- date_history[date_history != date_history %>% min()] %>% .[- which.max(.)]
+    # Use it to delete the files
+    purrr::walk(local_fn[stringr::str_detect(local_fn, paste0(as.character(prev_filedates),collapse = "|"))],file.remove)
+  } else if (HDA::go(local_fn)) file.remove(local_fn)
   # Delete the old data
-  if (HDA::go(local_fn)) file.remove(local_fn)
+  
+  
+  
   # End update local data
    #----------------------- Mon Aug 05 16:48:04 2019 ------------------------#
    
@@ -252,7 +272,7 @@ purrr::pmap(list(.o_p = split(open_positions, open_positions$symbol)[names(open_
   
   
     
-  if (nrow(tsl_orders_cumshares) > 0) { # if there are new buy orders for which tsl need to be set
+  if (tsl_orders_cumshares$TSL_shares > max(prev_tsl$cum.shares)) { # if there are new buy orders for which tsl need to be set
     for (i in 1:nrow(tsl_orders_cumshares)) {
     # Retrieve the orders themselves (such that the data can be filtered according to when the purchase was made)
     tsl_orders <- .orders %>% dplyr::filter(side == "buy" & status == "filled" & qty_remain > 0 & TSL == dplyr::ungroup(tsl_orders_cumshares)[i, "TSL", drop = T])
