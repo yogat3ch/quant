@@ -8,19 +8,23 @@ googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 try({source("~/R/Quant/JobsScripts/parameters.R")}) # principal and TSLvars
 Personal <- googlesheets::gs_read(params$gs, ws = "Personal")
 Positions_v <- Personal$Symbol[- c(1,2)]
+names(Positions_v) <- Positions_v
 load(file = params$paths$Positions_tsl) # Positions tsl for optimal TSL
 #TODO 2019-08-18 0902 Rework for new format of Positions_tsl 
 #TODO Load PositionData and form into Position_ts save Positions_ts to dat
 # ----------------------- Mon Aug 05 16:47:38 2019 ------------------------#
 # Update local data
-Positions_ts <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
+dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
   # Get the Historical Data filename from the HD
    local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.sym,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
    date_history <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}") %>% do.call("c", .) %>% lubridate::ymd()
+   message(paste0("Filename: ",basename(local_fn)))
+   message(HDA::go(local_fn))
+   #TODO HDA::go is not working for this character vector
   if (HDA::go(local_fn)) {
     # Get the last bar recorded
-    date_history <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}") %>% do.call("c", .) %>% lubridate::ymd()
     last_bar <-  date_history %>% max()
+    message(paste0("Last bar: ",last_bar))
     # Load the historical data
     .dat <- readr::read_csv(file = local_fn[stringr::str_which(local_fn, as.character(last_bar))])
     # Get the column with the date or time
@@ -49,7 +53,9 @@ Positions_ts <- purrr::map(Positions_v, params = params, .f = function(.sym, par
    .cal <- purrr::pmap(.cal, function(date, open, close){
      lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EST"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EST"))
    })
-   if (!purrr::map_lgl(.cal, now = lubridate::now(), function(.x, now) lubridate::`%within%`(now,.x)) %>% any) {
+   # If it is NOT during market hours AND the last_bar is equal to the last market day & there is data for .dat
+   if ({!purrr::map_lgl(.cal, now = lubridate::now(), function(.x, now) lubridate::`%within%`(now,.x)) %>% any} & {.cal[[max(which(purrr::map_lgl(.cal, ~ lubridate::int_end(.x) < lubridate::now())))]] %>% lubridate::int_end() %>% lubridate::as_date() == last_bar} & HDA::go(.dat)) {
+     attr(.dat, "Sym") <- .sym
      return(.dat)
    }
    
@@ -70,11 +76,11 @@ Positions_ts <- purrr::map(Positions_v, params = params, .f = function(.sym, par
     if (HDA::go(prev_filedates)) {
       purrr::walk(local_fn[stringr::str_detect(local_fn, paste0(as.character(prev_filedates),collapse = "|"))],file.remove) }
   } else if (HDA::go(local_fn)) file.remove(local_fn) # Delete the old data
+  attr(new_data, "Sym") <- .sym
 return(new_data)
 })
 # End update local data
 #----------------------- Mon Aug 05 16:48:04 2019 ------------------------#
-
 # ----------------------- Mon Jun 10 13:57:35 2019 ------------------------#
 # Add Independent variables
 source("~/R/Quant/JobsScripts/AddIVstoData.R", local = T)
