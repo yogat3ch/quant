@@ -11,7 +11,7 @@ if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
 source("~/R/Quant/JobsScripts/parameters.R")
 try(load(file = params$paths$Positions_tsl))
 if (!exists("add", mode = "logical")) add <- F
-
+nms <- names(dat)
 best_tsl <- purrr::map2(Positions_tsl[names(dat)], .y = dat, tslv = params$TSLvars, function(.x, .y, tslv){
   .x %<>% dplyr::mutate_at(dplyr::vars(tsl),~ stringr::str_replace(.,"\\_rv$",""))
   # Get the TSL with the most cumulative returns and with the most possible limit gain for a given period
@@ -67,25 +67,23 @@ run.time <- system.time({
     out
   }
 })
-
-# Re add attributes
 message(paste0(" Elapsed: ",lubridate::as.duration(run.time[3])," Time: ",lubridate::now()))
 parallel::stopCluster(cl)
-# Check Names
-tsl_nms <- purrr::pmap(.l = list(.x = params$TSLvars, .y = names(params$TSLvars), .z = seq_along(params$TSLvars)), .f = function(.x, .y, .z){
-  if (is.function(.x)) nm <- paste0(.y, .z, "_rv") else nm <- paste0(.y, paste0(.x, collapse = "-"),"_rv")
-  return(nm)
-}) %>% unlist
-dat <- purrr::map2(.x = dat, .y = nms, function(.x, .y){
+# End Add RVs
+#----------------------- Sun Aug 18 15:59:31 2019 ------------------------#
+# Re-add attributes
+names(dat) <- nms
+dat <- purrr::imap(.x = dat, function(.x, .y){
   attr(.x, "Sym") <- .y
   return(.x)
 })
-names(dat) <- nms
-purrr::map(dat, nms = tsl_nms, Positions_tsl = Positions_tsl, function(.x, nms, Positions_tsl){
+# Check Names
+purrr::walk(dat, .b_tsl = best_tsl, function(.x, .b_tsl){
   att <- attr(.x, "Sym")
-  nms <- Positions_tsl[[att]][["TSL"]][["rowname"]]
-  num <- which(!c(nms, paste0(nms,"_ind")) %in% names(.x))
-  if(length(num) > 0) {message(paste0(att, ": NAME CHECK | Missing names are:", c(nms, paste0(nms,"_ind"))[num]))}
+  nms <- .b_tsl[[att]][["tsl_types"]][["tsl"]]
+  rv_nms <- c(paste0(nms,"_rv"), paste0(nms,"_rv_ind"))
+  num <- which(!rv_nms %in% names(.x))
+  if(length(num) > 0) {message(paste0(att, ": NAME CHECK | Missing names are:", rv_nms[num]))}
 })
 if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) save(dat,file = "dat.Rdata")
 HDA::unloadPkgs(c("doParallel","iterators","parallel","foreach"))
