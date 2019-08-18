@@ -6,9 +6,7 @@ message(paste0("Begin AutomatedBuy sourced from ",basename(stringr::str_extract(
 # ----------------------- Wed Jul 10 13:32:46 2019 ------------------------#
 # Loads
 try({source(file = "~/R/Quant/JobsScripts/parameters.R")})
-googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
-gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=1757293360")
-Orders <- googlesheets::gs_read(gs, ws = "Orders", col_types = params$Orders_cols)
+Orders <- googlesheets::gs_read(params$gs, ws = "Orders", col_types = params$Orders_cols)
 
 # ----------------------- Wed Jul 10 13:32:38 2019 ------------------------#
 # Pre-allocation
@@ -46,10 +44,10 @@ Purchase$orders <- data.frame()
     
   # ----------------------- Tue Jul 02 15:27:43 2019 -----------------------#
   # Update the googlesheet meta-record
-  googlesheets::gs_add_row(gs, ws = "Orders", input = Purchase$placed)
+  googlesheets::gs_add_row(params$gs, ws = "Orders", input = Purchase$placed)
   }  
 # Add any symbols not currently present in the tracking sheets to the sheets.
-purrr::map(c("Hourly","Holdings","(Hi)","(Lo)","(Op)","(Vo)","(cP)"), gs = gs, s = Purchase$buy_syms, function(.x, gs, s){
+purrr::map(c("Hourly","Holdings","(Hi)","(Lo)","(Op)","(Vo)","(cP)"), gs = params$gs, s = Purchase$buy_syms, function(.x, gs, s){
   symbols <- googlesheets::gs_read(gs, ws = .x, range = googlesheets::cell_rows(1),col_names = F) %>% unlist
   if (!any(s %in% symbols)) {
     symbols <- c(symbols,s[!s %in% symbols])

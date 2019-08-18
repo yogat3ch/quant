@@ -2,6 +2,7 @@ params <- new.env()
 HDA::startPkgs(c("magrittr"))
 params$taxp <- "stts"
 params$live <- F
+googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 params$wind  <-  list(weeks = lubridate::days(7), moonphase = lubridate::weeks(2), mooncycle = lubridate::weeks(4), quarters = lubridate::weeks(12))
 

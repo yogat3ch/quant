@@ -2,88 +2,86 @@ HDA::startPkgs(c("magrittr","tidyverse"))
 setwd("~/R/Quant/JobsScripts")
 message(paste0("Begin AutomatedStopLoss sourced from ",basename(stringr::str_extract(commandArgs(trailingOnly = FALSE), "(?<=script\\s\\=\\s\\')[A-Za-z0-9\\/\\:\\.\\_]+") %>% .[!is.na(.)]), " at ", lubridate::now()," From location: ",getwd()))
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
+# ----------------------- Sun Aug 18 08:53:47 2019 ------------------------#
+# Load Files
 # TODO(could use optimization to only retrieve positions_new once per day)
-try({load("~/R/Quant/JobsScripts/parameters.Rdata")}) # principal and TSLvars
-try({load(params$paths$Positions_new)})
-# ----------------------- Mon Jun 10 15:37:01 2019 ------------------------#
-# Apply Models to the new data
-message(paste0("Load: ",params$paths$Positions_ts))
-load(file = params$paths$Positions_ts)
-if (xts::is.xts(Positions_ts[[1]])) {
-  OOTbegin <- lubridate::ymd({Positions_ts[[1]] %>% time %>% max})
-} else {
-  OOTbegin <- lubridate::ymd({Positions_ts[[1]] %>% tibbletime::get_index_col() %>% max})
-}
-message("Load Positions_tsl")
-load(file = params$paths$Positions_tsl)
-if (HDA::go("Positions_new")) {
-  if (xts::is.xts(Positions_new[[1]])) {
-    loadP_new <- time(Positions_new[[1]]) %>% max(na.rm = T) < {lubridate::today()} 
-  }else {
-    loadP_new <- tibbletime::get_index_col(Positions_new[[1]]) %>% max(na.rm = T) < {lubridate::today()}
+try({source("~/R/Quant/JobsScripts/parameters.R")}) # principal and TSLvars
+Personal <- googlesheets::gs_read(params$gs, ws = "Personal")
+Positions_v <- Personal$Symbol[- c(1,2)]
+load(file = params$paths$Positions_tsl) # Positions tsl for optimal TSL
+#TODO 2019-08-18 0902 Rework for new format of Positions_tsl 
+#TODO Load PositionData and form into Position_ts save Positions_ts to dat
+# ----------------------- Mon Aug 05 16:47:38 2019 ------------------------#
+# Update local data
+Positions_ts <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
+  # Get the Historical Data filename from the HD
+   local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.sym,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
+   date_history <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}") %>% do.call("c", .) %>% lubridate::ymd()
+  if (HDA::go(local_fn)) {
+    # Get the last bar recorded
+    date_history <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}") %>% do.call("c", .) %>% lubridate::ymd()
+    last_bar <-  date_history %>% max()
+    # Load the historical data
+    .dat <- readr::read_csv(file = local_fn[stringr::str_which(local_fn, as.character(last_bar))])
+    # Get the column with the date or time
+    td_nm <- stringr::str_extract(colnames(.dat), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
+    # If it's uppercase from earlier versions convert it to lower
+    if (grepl("T", td_nm)) {
+      n.td_nm <- tolower(td_nm)
+      .dat %<>% dplyr::rename(!!n.td_nm := !!td_nm)
+      td_nm <- n.td_nm
+    }
+    # Get the columns corresponding to the get_bars call
+    .dat %<>% dplyr::select(!!td_nm, "open", "high", "low", "close", "volume")
+
+  } else {
+    # If no data, get 201 data points previous
+   from_weeks <- 200/5 + 2 
+   cal <- AlpacaforR::get_calendar(lubridate::today() - lubridate::weeks(from_weeks), lubridate::today())
+   while (nrow(cal) < 201) {
+     cal <- AlpacaforR::get_calendar(lubridate::today() - lubridate::weeks(from_weeks), lubridate::today())
+     from_weeks <- {201 - nrow(cal)} %/% 5 + 1 + from_weeks
+   }
+   last_bar <- cal[1, 1]
   }
-} else loadP_new <- T
-if (loadP_new) {
-# ----------------------- Mon Jun 10 13:56:31 2019 ------------------------#
-# Get New Positions
-gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
-shts <- purrr::map(.x = c('Holdings', '(Hi)' , '(Lo)', '(Op)', '(Vo)', '(cP)'), gs = gsPositions, .f =  function(.x, gs){
-  out <- googlesheets::gs_read(gs, ws = .x, trim_ws = T)
-  out$Date %<>% lubridate::ymd_hms()
-  Sys.sleep(1.5)
-  return(out)
-})
-
-Positions_v <- names(Positions_ts)
-names(Positions_v) <- names(Positions_ts)
-Positions_new <- purrr::map(Positions_v, shts = shts, function(.x, shts){
-  clm <- purrr::map(shts, purrr::pluck, .x)
-  clm <- do.call('cbind', clm) %>% as.data.frame
-  names(clm) <- c("close","high","low","open","volume","changePercent")
-  toNum <- function(x){
-    x %>% stringr::str_replace_all("\\$|\\,","") %>% as.numeric
-  }  
-  clm %<>% dplyr::mutate_if(.pred = funs(is.factor),funs(toNum))
-  out <- cbind.data.frame(Time = shts[[1]][["Date"]], clm, stringsAsFactors = F) 
-  out %<>% na.omit
-  #Fill dates for proper windowing
-  # First create a vector with omitted days (weekends) added in ymd_hms format
-  times <- c(out$Time,  format(seq(out$Time %>% min(na.rm = T),out$Time %>% max(na.rm = T), "1 days"), "%Y-%m-%d")[!format(seq(out$Time %>% min(na.rm = T),out$Time %>% max(na.rm = T), "1 days"), "%Y-%m-%d") %in% format(out$Time, "%Y-%m-%d")] %>% stringr::str_replace("$", " 17:00:00 UTC") %>% lubridate::ymd_hms()) %>% sort
   
-  out <- dplyr::left_join(data.frame(Time = times), out, by = "Time") %>% zoo::na.locf() %>% tibbletime::tbl_time(index = "Time")
-  out$Dec_date <- tibbletime::get_index_col(out) %>% lubridate::decimal_date() %>% {. - as.numeric(stringr::str_match(., "^\\d+"))}
-  attr(out,"Sym") <- .x
-  return(out)
+   .cal <- AlpacaforR::get_calendar(from = lubridate::today() - lubridate::weeks(2), to = lubridate::today() + lubridate::weeks(2))
+   .cal <- purrr::pmap(.cal, function(date, open, close){
+     lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EST"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EST"))
+   })
+   if (!purrr::map_lgl(.cal, now = lubridate::now(), function(.x, now) lubridate::`%within%`(now,.x)) %>% any) {
+     return(.dat)
+   }
+   
+  # Retrieve the updated data
+  message(paste0("Retrieving data for ",.sym))
+  new_bars <- AlpacaforR::get_bars(ticker = .sym, from = last_bar, to = lubridate::today())[[1]]
+  if (HDA::go(.dat)) { # if the data exists on the HD
+    # Combine it with the new data
+    new_data <- rbind.data.frame(.dat[ - nrow(.dat), ], new_bars)
+  } else new_data <- new_bars # If it doesn't just make the new_data
+  # Save the new data
+  readr::write_csv(new_data,  path = paste0("~/R/Quant/PositionData/",.sym, lubridate::as_date(min(new_data[["time"]])),"_", lubridate::as_date(max(new_data[["time"]])), ".csv"))
+  # If previous files exist
+  if (HDA::go(local_fn) & length(local_fn) > 1) {
+    # Get the final bar times of the previous files
+    prev_filedates <- date_history[date_history != date_history %>% min()] %>% .[- which.max(.)]
+    # Use it to delete the files
+    if (HDA::go(prev_filedates)) {
+      purrr::walk(local_fn[stringr::str_detect(local_fn, paste0(as.character(prev_filedates),collapse = "|"))],file.remove) }
+  } else if (HDA::go(local_fn)) file.remove(local_fn) # Delete the old data
+return(new_data)
 })
-}
-# ----------------------- Mon Jun 10 14:29:11 2019 ------------------------#
-# Get the most recent data from googlesheets every hour
-gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
-ss <- googlesheets::gs_read(gsPositions, ws = "Personal", range = cellranger::cell_cols("A:L")) %>% cbind.data.frame(Time = lubridate::today(), .) %>% select(Time, Symbol,high = Hi,low = Lo, close = Price, open = Open, volume = Volume, changePercent) %>% mutate_at(vars(Time), funs(lubridate::as_date))
+# End update local data
+#----------------------- Mon Aug 05 16:48:04 2019 ------------------------#
 
-toNum <- function(x){
-  x %>% stringr::str_replace_all("\\$|\\,","") %>% as.numeric
-}
-ss %<>% mutate_at(vars(c("high","low","close","open","volume","changePercent")),~toNum)
-ss %<>% na.omit
-#Fill dates for proper windowing
-ss$Dec_date <- ss$Time %>% lubridate::decimal_date() %>% {. - as.numeric(stringr::str_match(., "^\\d+"))}
-# Combine the most recent data with the historical daily data
-dat <- purrr::map2(Positions_new, names(Positions_new), ss = ss, function(.x, .y, ss){
-  # Remove the last row of Positions_new if it's an earlier synchronization of the same day, and rbind the most recent data minus the symbol column
-  out <- rbind.data.frame(.x[.x$Time != ss$Time[1], ], ss[ss$Symbol == .y,] %>% dplyr::select(-Symbol))
-  return(out)
-})
-dat <- Positions_new
-save(Positions_new, file = params$paths$Positions_new)
-# Set the signal windows desired
-wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
 # ----------------------- Mon Jun 10 13:57:35 2019 ------------------------#
 # Add Independent variables
 source("~/R/Quant/JobsScripts/AddIVstoData.R", local = T)
 # Add Dependent variables
 source("~/R/Quant/JobsScripts/AddRVstoNewData.R", local = T)
-
+# ----------------------- Mon Jun 10 15:37:01 2019 ------------------------#
+# Apply Models to the new data
 best_tsl <- Positions_tsl
 source("~/R/Quant/JobsScripts/ApplyModelstoNewData.R", local = T)
 Actions <- purrr::map(dat, function(.x){
