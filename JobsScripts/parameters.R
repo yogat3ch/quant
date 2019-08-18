@@ -2,6 +2,7 @@ params <- new.env()
 HDA::startPkgs(c("magrittr"))
 params$taxp <- "stts"
 params$live <- F
+params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 params$wind  <-  list(weeks = lubridate::days(7), moonphase = lubridate::weeks(2), mooncycle = lubridate::weeks(4), quarters = lubridate::weeks(12))
 
 params$paths <- list(Positions_tsl = "~/R/Quant/Positions_tsl2019-07-18.Rdata", 
@@ -78,6 +79,8 @@ attr(params$TSLvars, "tsl_amt") <- function(.data, .args, verbose = F){
 
 # ----------------------- Wed Jul 10 13:32:33 2019 ------------------------#
 # Functions
+# ws = wash sale amout
+# wso = wash sale order id
 params$AlpacatoR_order_mutate <- function(l, tsl = '', live = '', ws = 0, wso = '') {
   library("magrittr")
   # toNum <- function(x){
@@ -85,10 +88,8 @@ params$AlpacatoR_order_mutate <- function(l, tsl = '', live = '', ws = 0, wso = 
   # }
   l[l %>% purrr::map_lgl(is.null)] <- NA
   l %<>% as.data.frame(stringsAsFactors = F) %>% cbind.data.frame(data.frame(Platform = "A"), ., stringsAsFactors = F)
-  # Deprecated as of commit 83dacb1 on AlpacaforR
-  # df <- dplyr::mutate_at(l, dplyr::vars(dplyr::ends_with("at")),~lubridate::ymd_hms(., tz = Sys.timezone()))
-  # df <- dplyr::mutate_at(df, dplyr::vars(qty, filled_qty, filled_avg_price, limit_price, stop_price), ~toNum)
-  df <- dplyr::mutate_if(l, .predicate = ~is.character(.), ~trimws(.))
+  df <- dplyr::mutate_if(l, .predicate = ~is.character(.), ~trimws(.)) %>% dplyr::mutate_at(dplyr::vars(dplyr::ends_with("at")), ~ lubridate::as_datetime(., tz = "EST"))
+  
   if (df$side == "buy") {
     df %<>% mutate(CB = filled_qty * filled_avg_price + ws)
     if (ws > 0) {
