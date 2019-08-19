@@ -15,14 +15,18 @@ dat <- purrr::imap(fns, best_tsl = best_tsl, newdata = dat, OOTbegin = OOTbegin,
   if (!any(.y %in% names(newdata))) return(NULL)
   message(paste0("Loading: ", .y))
   try({load(.x)})
-  s <- .y
+  tsl <- purrr::pluck(best_tsl, .y)
+  bestTSL_chr <- tsl[["tsl_types"]][["tsl"]] %>% paste0("_rv")
+  tsl.param_chr <- tsl[["tsl_types"]][["pct"]]
   ob <- get0(ob_chr)
-  newdata <- purrr::pluck(newdata, s)
+  if (any(duplicated(names(ob)))) { # if there are duplicates, delete and resave
+    assign(ob[-which(duplicated(names(ob)))], ob_chr)
+    save(list = ob_chr, file = paste0("~/R/Quant/MdlBkp/",ob_chr,".Rdata"), compress = "xz")
+  }
+  newdata <- purrr::pluck(newdata, .y)
   if (tibble::is_tibble(newdata) & !is.null(OOTbegin)) newdata <- newdata[newdata %>% tibbletime::get_index_col() > OOTbegin,] else if (xts::is.xts(newdata) & !is.null(OOTbegin)) newdata <- newdata[time(newdata) > OOTbegin,]
 
-  tsl <- purrr::pluck(best_tsl, s)
-  bestTSL_chr <- tsl[["tsl_types"]][["tsl"]]
-  tsl.param_chr <- tsl[["tsl_types"]][["pct"]] # Get the TSL threshold parameter
+  # Get the TSL threshold parameter
   preds <- list()
   Cum.Returns <- vector("numeric")
   Returns <- vector("numeric")
@@ -45,7 +49,7 @@ dat <- purrr::imap(fns, best_tsl = best_tsl, newdata = dat, OOTbegin = OOTbegin,
   out <- cbind.data.frame(do.call("cbind.data.frame", preds), newdata) %>% dplyr::select(!!td_nm, dplyr::everything())
   attr(out,"Cum.Returns") <- Cum.Returns
   attr(out,"Returns") <- Returns
-  attr(out, "Sym") <- s
+  attr(out, "Sym") <- .y
   rm(ob_chr)
   return(out)
 })
