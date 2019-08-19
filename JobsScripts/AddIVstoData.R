@@ -13,7 +13,6 @@ dat <- purrr::map2(.x = dat, .y = names(dat), function(.x, .y){
 source("~/R/Quant/JobsScripts/parameters.R")
 # Add wind to this environment
 wind <- params$wind
-wind$sma <-  200
 
 if (!any(names(dat[[1]]) %in% "changePercent")) { 
 dat <- purrr::map(dat, function(.x){
@@ -63,7 +62,8 @@ dat %<>% lapply(wind = sma.wind , function(l, wind){
  message(paste0(att,": SMA"))
     if (xts::is.xts(l)) out <- xts::cbind.xts(l, out_sma) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l, out_sma), index = !!td_nm)}
+      out <- tibbletime::tbl_time(cbind.data.frame(l, out_sma), index = !!rlang::sym(td_nm))
+      }
     attr(out, "Sym") <- att
     } else out <- l
   return(out)
@@ -84,8 +84,8 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     colnames(adx) <- paste(colnames(adx), rep(wind, each = 4), sep = ".")
     if (stringr::str_which(names(l),"ADX|DI\\w?|DX|DX\\w.*\\d{1,2}?\\.?\\d{1,2}?$") %>% length > 0) l <- l[,-c(stringr::str_which(names(l),"ADX|DI\\w?|DX|DX\\w.*\\d{1,2}?\\.?\\d{1,2}?$"))]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l, adx) else {
-      td_nm <- stringr::str_extract(names(l), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = !!td_nm)
+      td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
+      out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": ADX"))
@@ -128,7 +128,7 @@ dat %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, func
     out <- do.call("cbind", out)
     colnames(out) <- nms
     td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-    out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!td_nm)
+    out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!rlang::sym(td_nm))
   }
   attr(out, "Sym") <- att
   message(paste0(attr(l, "Sym"),": ADX_i"))
@@ -162,7 +162,7 @@ dat %<>% lapply(wind = wind, compress = T, function(l, wind, compress){
     }
     if (xts::is.xts(l)) out <- xts::cbind.xts(l, adx) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l, adx), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att
     message(paste0(attr(l, "Sym"),": ADXc"))
@@ -194,7 +194,7 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     if (stringr::str_which(names(l),"^WpR\\.\\d{1,2}") %>% length > 0) l <- l[,-c(stringr::str_which(names(l),"^WpR\\.\\d{1,2}"))]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l, WpR) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l, WpR), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l, WpR), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": WpR"))
@@ -218,7 +218,7 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     if (grep("^rsi\\.\\d{1,2}$",names(l)) %>% length > 0) l <- l[, -grep("^rsi\\.\\d{1,2}$",names(l))]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l,rsic) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l,rsic), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l,rsic), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": RSI"))
@@ -261,7 +261,7 @@ dat %<>% lapply(wind = wind, threshold1 = c(high = 70, low = 30), threshold2 = c
     if (grep("^rsi.*i$",names(l)) %>% length > 0) l <- l[,-grep("^rsi.*i$",names(l))]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l, out) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": RSI_i"))
@@ -300,7 +300,7 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     if (grep("^roc|^mom",names(l)) %>% length > 0) l <- l[,-grep("^roc|^mom",names(l))]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l, roc, mom) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l, roc, mom), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l, roc, mom), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": ROC & MOM"))
@@ -326,7 +326,7 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     if (grep("atr|trueLow",names(l)) %>% length > 0) l <- l[,-grep("atr|trueLow",names(l))]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l, out) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l, out), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": ATR"))
@@ -343,7 +343,7 @@ dat %<>% lapply(verbose = F, function(l, verbose){
     if (grep("sar", names(l), ignore.case = T) %>% length > 0) l <- l[, -grep("sar", names(l), ignore.case = T)]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l,sar) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l,sar), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l,sar), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": SAR"))
@@ -378,7 +378,7 @@ dat %<>% lapply(verbose = F, function(l, verbose){
     if (grep("sar_i\\.?\\d?", names(l), ignore.case = T) %>% length > 0) l <- l[, -grep("sar_i\\.?\\d?", names(l), ignore.case = T)]
     if (xts::is.xts(l)) out <- xts::cbind.xts(l,sar_i = out) else {
       td_nm <- stringr::str_extract(names(l), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(l,sar_i = out), index = !!td_nm)
+      out <- tibbletime::tbl_time(cbind.data.frame(l,sar_i = out), index = !!rlang::sym(td_nm))
       }
     attr(out, "Sym") <- att 
  message(paste0(attr(l, "Sym"),": sar_i"))
@@ -415,7 +415,7 @@ macd_dif <- purrr::map(wind, env = parent.frame(), l = .x, function(.x, l, env){
      
     if (xts::is.xts(.x)) out <- xts::cbind.xts(.x, macd_dif) else {
       td_nm <- stringr::str_extract(names(.x), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-      out <- tibbletime::tbl_time(cbind.data.frame(.x, macd_dif), index = !!td_nm)}
+      out <- tibbletime::tbl_time(cbind.data.frame(.x, macd_dif), index = !!rlang::sym(td_nm))}
     attr(out, "Sym") <- att
     message(paste0(att,": MACD"))
   return(out)
@@ -450,7 +450,7 @@ dat %<>% purrr::map(wind = wind, function(.x, wind){
   if (stringr::str_which(names(.x),"UO\\.\\d{1,3}") %>% length > 0) .x <- .x[,-c(stringr::str_which(names(.x),"UO\\.\\d{1,3}"))]
   if (xts::is.xts(.x)) out <- xts::cbind.xts(.x, uo) else {
     td_nm <- stringr::str_extract(names(.x), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-    out <- tibbletime::tbl_time(cbind.data.frame(.x, uo), index = !!td_nm)
+    out <- tibbletime::tbl_time(cbind.data.frame(.x, uo), index = !!rlang::sym(td_nm))
   }
   attr(out, "Sym") <- att 
   message(paste0(att,": UO"))
