@@ -14,17 +14,19 @@ load(file = params$paths$Positions_tsl) # Positions tsl for optimal TSL
 #TODO Load PositionData and form into Position_ts save Positions_ts to dat
 # ----------------------- Mon Aug 05 16:47:38 2019 ------------------------#
 # Update local data
+#rm(list = c(".dat", "last_bar", "local_fn", "date_history", "td_nm", "nms", ".cal", "cal", "lgl", "from_weeks", "new_data"))
 dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
   # Get the Historical Data filename from the HD
    local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.sym,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
+   message(local_fn)
    date_history <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}") %>% do.call("c", .) %>% lubridate::ymd()
+   # Get the last bar recorded
+   last_bar <-  date_history %>% max()
+   message(paste0("Last bar: ",last_bar))
    message(paste0("Filename: ",basename(local_fn)))
    message(HDA::go(local_fn))
    #TODO HDA::go is not working for this character vector
   if (HDA::go(local_fn)) {
-    # Get the last bar recorded
-    last_bar <-  date_history %>% max()
-    message(paste0("Last bar: ",last_bar))
     # Load the historical data
     .dat <- readr::read_csv(file = local_fn[stringr::str_which(local_fn, as.character(last_bar))])
     # Get the column with the date or time
@@ -51,7 +53,6 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
    }
    last_bar <- cal[1, 1]
   }
-  
    .cal <- AlpacaforR::get_calendar(from = lubridate::today() - lubridate::weeks(2), to = lubridate::today() + lubridate::weeks(2))
    .cal <- purrr::pmap(.cal, function(date, open, close){
      lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EST"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EST"))
@@ -64,32 +65,50 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
    # AND there is data for .dat
    lgl[3] <- HDA::go(.dat)
    message(lgl)
-   if ( all(lgl) ) {
+   if ( lgl[1] & lgl[3] | lgl[2] & lgl[3] ) {
      attr(.dat, "Sym") <- .sym
      return(.dat)
    }
   # Retrieve the updated data
+  if (debug){
+  a <- readline(paste0("Retrieving data for ",.sym,"?"))
+  if (a == "n") stop("Quitting.") else if (a == "s") return(.dat)
+  }
   message(paste0("Retrieving data for ",.sym))
   new_bars <- AlpacaforR::get_bars(ticker = .sym, from = last_bar, to = lubridate::today())[[1]]
   if (HDA::go(.dat)) { # if the data exists on the HD
     # Combine it with the new data
-    new_data <- rbind.data.frame(.dat[ - nrow(.dat), ], new_bars)
+    keep_ind <- .dat[[td_nm]] %>% lubridate::as_date() != new_bars[["time"]] %>% lubridate::as_date()
+    new_data <- rbind.data.frame(.dat[keep_ind, ], new_bars)
   } else new_data <- new_bars # If it doesn't just make the new_data
   # Save the new data
+
   readr::write_csv(new_data,  path = paste0("~/R/Quant/PositionData/",.sym, lubridate::as_date(min(new_data[["time"]])),"_", lubridate::as_date(max(new_data[["time"]])), ".csv"))
   # If previous files exist
-  if (HDA::go(local_fn) & length(local_fn) > 1) {
-    # Get the final bar times of the previous files
-    prev_filedates <- date_history[date_history != date_history %>% min()] %>% .[- which.max(.)]
-    # Use it to delete the files
-    if (HDA::go(prev_filedates)) {
-      purrr::walk(local_fn[stringr::str_detect(local_fn, paste0(as.character(prev_filedates),collapse = "|"))],file.remove) }
-  } else if (HDA::go(local_fn)) file.remove(local_fn) # Delete the old data
+  if (HDA::go(local_fn) & last_bar != lubridate::today()) {
+    
+      purrr::walk(local_fn[stringr::str_detect(local_fn, as.character(last_bar))],file.remove) 
+  }
   attr(new_data, "Sym") <- .sym
 return(new_data)
 })
 # End update local data
 #----------------------- Mon Aug 05 16:48:04 2019 ------------------------#
+best_tsl <- purrr::map2(Positions_tsl[names(dat)], .y = dat, tslv = params$TSLvars, function(.x, .y, tslv){
+  .x %<>% dplyr::mutate_at(dplyr::vars(tsl),~ stringr::str_replace(.,"\\_rv$",""))
+  # Get the TSL with the most cumulative returns and with the most possible limit gain for a given period
+  out <- list(tsl_types = rbind.data.frame(dplyr::arrange(.x, dplyr::desc(Cum.Returns)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")],
+                                           dplyr::arrange(.x, dplyr::desc(`100%max`)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")]))
+  # Are there tsl not already represented in the data?
+  existing_tsl <- {out$tsl_types$tsl[out$tsl_types$tsl %in% {names(.y)[stringr::str_which(names(.y),"rv$")] %>% stringr::str_replace(.,"\\_rv$","")}] %>% length} > 0
+  # If there are and add is true (defaults to true) then add only those that don't already exist
+  if (existing_tsl){
+    # filter the table for those tsl not already in the data
+    out$tsl_types %<>% dplyr::filter(!tsl == existing_tsl) }
+  # Return the TSLvars parameters for each of those TSL types
+  out$tslv <- tslv[out$tsl_types[["tsl"]]]
+  return(out)
+})
 # ----------------------- Mon Jun 10 13:57:35 2019 ------------------------#
 # Add Independent variables
 source("~/R/Quant/JobsScripts/AddIVstoData.R", local = T)
@@ -97,7 +116,6 @@ source("~/R/Quant/JobsScripts/AddIVstoData.R", local = T)
 source("~/R/Quant/JobsScripts/AddRVstoNewData.R", local = T)
 # ----------------------- Mon Jun 10 15:37:01 2019 ------------------------#
 # Apply Models to the new data
-best_tsl <- Positions_tsl
 source("~/R/Quant/JobsScripts/ApplyModelstoNewData.R", local = T)
 Actions <- purrr::map(dat, function(.x){
   out <- xts::last(.x) %>% dplyr::select(dplyr::ends_with("pred")) %>% unlist %>% as.character %>% as.numeric
