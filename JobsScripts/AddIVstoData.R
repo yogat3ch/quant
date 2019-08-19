@@ -5,7 +5,9 @@ HDA::startPkgs(c("magrittr", "xts", "tidyverse"))
 if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
   message("Loaded from BG Job, loading dependencies...")
   load("dat.Rdata")}
-## @knitr Add attributes for debugging purposes
+## @knitr Add attributes for debugging purposes  
+message("Add attributes for debugging purposes ")
+ message("Add attributes for debugging purposes")
 dat <- purrr::map2(.x = dat, .y = names(dat), function(.x, .y){
  attr(.x, "Sym") <- .y
   return(.x)
@@ -13,7 +15,7 @@ dat <- purrr::map2(.x = dat, .y = names(dat), function(.x, .y){
 source("~/R/Quant/JobsScripts/parameters.R")
 # Add wind to this environment
 wind <- params$wind
-
+sma.wind <- c(wind, sma = 200)
 if (!any(names(dat[[1]]) %in% "changePercent")) { 
 dat <- purrr::map(dat, function(.x){
   x <- with(
@@ -27,7 +29,8 @@ dat <- purrr::map(dat, function(.x){
   return(.x)
   })
 }
-## @knitr Add Ephemeris Data
+## @knitr Add Ephemeris Data 
+message("Add Ephemeris Data")
 ephData <- readr::read_csv("~/R/Quant/ephData.csv")
 ephData %<>% select(time, dplyr::ends_with("SI"))#, - dplyr::starts_with("NEP"), - dplyr::starts_with("PLU"),  - dplyr::starts_with("URA"))
 dat <- purrr::map(dat, edat = ephData, function(.x, edat){
@@ -42,9 +45,9 @@ dat <- purrr::map(dat, edat = ephData, function(.x, edat){
   attr(out, "Sym") <- s
   return(out)
 })
-## @knitr Add Simple Moving Averages
-
-dat %<>% lapply(wind = sma.wind , function(l, wind){
+## @knitr Add Simple Moving Averages 
+message("Add Simple Moving Averages")
+dat %<>% lapply(wind = sma.wind, function(l, wind){
   att <- attr(l, "Sym")
   if (all(!is.na(l[,c("high","low","close")])) & any(sum(!is.na(l[,"close"])) > wind) ) {
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", attr(l, "Sym")," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -68,7 +71,8 @@ dat %<>% lapply(wind = sma.wind , function(l, wind){
     } else out <- l
   return(out)
 })
-## @knitr Add ADX
+## @knitr Add ADX 
+message("Add ADX")
 dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -94,7 +98,8 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   return(out)
 })
 
-## @knitr Add ADX signal
+## @knitr Add ADX signal 
+message("Add ADX signal")
 dat %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, function(l, threshold1, threshold2, wind, verbose){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -137,7 +142,8 @@ dat %<>% lapply(threshold1 = 20, threshold2 = 25, wind = wind, verbose = F, func
   return(out)
 
 })
-## @knitr Add Compressed ADX
+## @knitr Add Compressed ADX 
+message("Add Compressed ADX")
 dat %<>% lapply(wind = wind, compress = T, function(l, wind, compress){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -171,7 +177,8 @@ dat %<>% lapply(wind = wind, compress = T, function(l, wind, compress){
   return(out)
 })
 
-## @knitr Add Williams Percent R
+## @knitr Add Williams Percent R 
+message("Add Williams Percent R")
 dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -201,7 +208,8 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
     
   return(out)
 })
-## @knitr Add RSI
+## @knitr Add RSI 
+message("Add RSI")
 dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   att <- attr(l, "Sym")
   if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -226,7 +234,8 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   return(out)
 })
 
-## @knitr Add RSI Indicator
+## @knitr Add RSI Indicator 
+message("Add RSI Indicator")
 dat %<>% lapply(wind = wind, threshold1 = c(high = 70, low = 30), threshold2 = c(high = 80, low = 20), verbose = F, sma.wind = sma.wind, function(l, wind, threshold1, threshold2, sma.wind, verbose){
   att <- attr(l, "Sym") 
  if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -268,7 +277,8 @@ dat %<>% lapply(wind = wind, threshold1 = c(high = 70, low = 30), threshold2 = c
     if (verbose == T) print(nrow(out))
   return(out)
 })
-## @knitr Add ROC And Momentum
+## @knitr Add ROC And Momentum 
+message("Add ROC And Momentum")
 dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   att <- attr(l, "Sym") 
  if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -309,7 +319,8 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   if (verbose == T) print(nrow(out))
   return(out)
 })
-## @knitr Add ATR
+## @knitr Add ATR 
+message("Add ATR")
 dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   att <- attr(l, "Sym") 
  if (nrow(l) < max(wind)) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -333,7 +344,8 @@ dat %<>% lapply(wind = wind, verbose = F, function(l, wind, verbose){
   
   return(out)
 })
-## @knitr Add SAR
+## @knitr Add SAR 
+message("Add SAR")
 dat %<>% lapply(verbose = F, function(l, verbose){
   att <- attr(l, "Sym")
   if (all(!is.na(quantmod::HLC(l))) ) {
@@ -350,7 +362,8 @@ dat %<>% lapply(verbose = F, function(l, verbose){
   } else out <- l
   return(out)
 })
-## @knitr Add SAR Indicator
+## @knitr Add SAR Indicator 
+message("Add SAR Indicator")
 dat %<>% lapply(verbose = F, function(l, verbose){
   att <- attr(l,"Sym")
   if (all(!is.na(quantmod::HLC(l))) ) {
@@ -386,7 +399,8 @@ dat %<>% lapply(verbose = F, function(l, verbose){
   } else out <- l
   return(out)
 })
-## @knitr Add MACD Compressed
+## @knitr Add MACD Compressed 
+message("Add MACD Compressed")
 dat %<>% purrr::map(wind = wind, function(.x, wind){
   att <- attr(.x, "Sym")
   if (length(wind[sum(!is.na(.x[,"close"])) > wind * 2]) < 1) {
@@ -420,14 +434,16 @@ macd_dif <- purrr::map(wind, env = parent.frame(), l = .x, function(.x, l, env){
     message(paste0(att,": MACD"))
   return(out)
 })
-## @knitr Add Decimal Date
+## @knitr Add Decimal Date 
+message("Add Decimal Date")
 dat %<>% purrr::map(function(.x){
   if (xts::is.xts(.x)) .x$Dec_date <- time(.x) %>% lubridate::decimal_date() %>% {. - as.numeric(stringr::str_match(., "^\\d+"))} else { 
     .x$Dec_date <- tibbletime::get_index_col(.x) %>% lubridate::decimal_date() %>% {. - as.numeric(stringr::str_match(., "^\\d+"))}
   }
     return(.x)
 })
-## @knitr Add Ultimate Oscillator
+## @knitr Add Ultimate Oscillator 
+message("Add Ultimate Oscillator")
 dat %<>% purrr::map(wind = wind, function(.x, wind){
   att <- attr(.x, "Sym")
   if (nrow(.x) < {max(wind) * 4}) message(paste0("Number of observations in ", att," is fewer than maximum window. Outcome will only be calculated for those windows that do not exceed the max number of observations."))
@@ -466,7 +482,8 @@ purrr::map(dat, nms = nms, function(.x, nms){
   num <- which(!c(nms) %in% names(.x))
   if(length(num) > 0) {message(paste0(att, ": NAME CHECK | Missing names are:", paste0(c(nms)[num], collapse = ", ")))}
   })
-## @knitr Add Ephemeris Data
+## @knitr Add Ephemeris Data 
+message("Add Ephemeris Data")
 # Re-add Attributes
 dat <- purrr::map2(.x = dat, .y = names(dat), function(.x, .y){
   attr(.x, "Sym") <- .y

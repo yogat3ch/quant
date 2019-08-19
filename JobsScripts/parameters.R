@@ -4,7 +4,7 @@ params$taxp <- "stts"
 params$live <- F
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
-params$wind  <-  c(weeks = 5, moonphase = 5 * 2, mooncycle = 5 * 4, quarters = 5 * 12, sma = 200)
+params$wind  <-  c(weeks = 5, moonphase = 5 * 2, mooncycle = 5 * 4, quarters = 5 * 12)
 
 params$paths <- list(Positions_tsl = "~/R/Quant/Positions_tsl2019-07-18.Rdata", 
                      Positions_ts = "~/R/Quant/Positions_ts_rv_iv2015-07-27_2019-07-16.Rdata",
