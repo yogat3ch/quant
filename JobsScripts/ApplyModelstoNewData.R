@@ -12,10 +12,10 @@ fns <- list.files("~/R/Quant/MdlBkp", full.names = T, pattern = ".Rdata$")
 names(fns) <- stringr::str_match(fns, "\\/MdlBkp\\/([A-Z]+)")[,2]
 dat <- purrr::imap(fns, best_tsl = best_tsl, newdata = dat, OOTbegin = OOTbegin, function(.x, .y, best_tsl, newdata, OOTbegin){
   ob_chr <- stringr::str_match(.x, "\\/MdlBkp\\/([\\w\\_]+)")[,2]
-  if (!any(ob_chr %in% names(newdata))) return(NULL)
+  if (!any(.y %in% names(newdata))) return(NULL)
+  message(paste0("Loading: ", .y))
   try({load(.x)})
   s <- .y
-  message(s)
   ob <- get0(ob_chr)
   newdata <- purrr::pluck(newdata, s)
   if (tibble::is_tibble(newdata) & !is.null(OOTbegin)) newdata <- newdata[newdata %>% tibbletime::get_index_col() > OOTbegin,] else if (xts::is.xts(newdata) & !is.null(OOTbegin)) newdata <- newdata[time(newdata) > OOTbegin,]
