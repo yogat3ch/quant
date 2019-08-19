@@ -12,21 +12,6 @@ source("~/R/Quant/JobsScripts/parameters.R")
 try(load(file = params$paths$Positions_tsl))
 if (!exists("add", mode = "logical")) add <- F
 nms <- names(dat)
-best_tsl <- purrr::map2(Positions_tsl[names(dat)], .y = dat, tslv = params$TSLvars, function(.x, .y, tslv){
-  .x %<>% dplyr::mutate_at(dplyr::vars(tsl),~ stringr::str_replace(.,"\\_rv$",""))
-  # Get the TSL with the most cumulative returns and with the most possible limit gain for a given period
-  out <- list(tsl_types = rbind.data.frame(dplyr::arrange(.x, dplyr::desc(Cum.Returns)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")],
-  dplyr::arrange(.x, dplyr::desc(`100%max`)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")]))
-  # Are there tsl not already represented in the data?
-  existing_tsl <- {out$tsl_types$tsl[out$tsl_types$tsl %in% {names(.y)[stringr::str_which(names(.y),"rv$")] %>% stringr::str_replace(.,"\\_rv$","")}] %>% length} > 0
-  # If there are and add is true (defaults to true) then add only those that don't already exist
-  if (existing_tsl){
-  # filter the table for those tsl not already in the data
-  out$tsl_types %<>% dplyr::filter(!tsl == existing_tsl) }
-  # Return the TSLvars parameters for each of those TSL types
-  out$tslv <- tslv[out$tsl_types[["tsl"]]]
-  return(out)
-  })
 # # For debugging
 # list(l = dat[[1]], this_tsl = best_tsl[names(dat)][[1]], tsl_amt = purrr::map(1:length(dat), tsl_amt = attr(params$TSLvars, "tsl_amt"), function(.x, tsl_amt) {return(tsl_amt)}) %>% .[[1]]) %>% list2env(envir = .GlobalEnv)
 cl <- parallel:::makePSOCKcluster(6, outfile = "~/R/Quant/dopar.log") 
