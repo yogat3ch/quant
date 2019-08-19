@@ -1,4 +1,4 @@
-HDA::startPkgs(c("magrittr","tidyverse"))
+HDA::startPkgs(c("magrittr","tidyverse","rlang"))
 setwd("~/R/Quant/JobsScripts")
 message(paste0("Begin AutomatedStopLoss sourced from ",basename(stringr::str_extract(commandArgs(trailingOnly = FALSE), "(?<=script\\s\\=\\s\\')[A-Za-z0-9\\/\\:\\.\\_]+") %>% .[!is.na(.)]), " at ", lubridate::now()," From location: ",getwd()))
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
@@ -30,13 +30,16 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
     # Get the column with the date or time
     td_nm <- stringr::str_extract(colnames(.dat), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
     # If it's uppercase from earlier versions convert it to lower
-    if (grepl("T", td_nm)) {
+    if (grepl("T", td_nm, fixed = T)) {
+      message("Renaming")
       n.td_nm <- tolower(td_nm)
       .dat %<>% dplyr::rename(!!n.td_nm := !!td_nm)
       td_nm <- n.td_nm
     }
     # Get the columns corresponding to the get_bars call
-    .dat %<>% dplyr::select(!!td_nm, "open", "high", "low", "close", "volume")
+    nms <- c(td_nm, "open","high","low", "close", "volume")
+    nms <- rlang::syms(nms)
+    .dat %<>% dplyr::select(!!! nms)
 
   } else {
     # If no data, get 201 data points previous
@@ -53,12 +56,18 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
    .cal <- purrr::pmap(.cal, function(date, open, close){
      lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EST"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EST"))
    })
-   # If it is NOT during market hours AND the last_bar is equal to the last market day & there is data for .dat
-   if ({!purrr::map_lgl(.cal, now = lubridate::now(), function(.x, now) lubridate::`%within%`(now,.x)) %>% any} & {.cal[[max(which(purrr::map_lgl(.cal, ~ lubridate::int_end(.x) < lubridate::now())))]] %>% lubridate::int_end() %>% lubridate::as_date() == last_bar} & HDA::go(.dat)) {
+   lgl <- vector()
+   # If it is NOT during market hours
+   lgl[1]<- {!purrr::map_lgl(.cal, now = lubridate::now(), function(.x, now) lubridate::`%within%`(now,.x)) %>% any}
+   # AND the last_bar is equal to the last market day 
+   lgl[2] <- {.cal[[max(which(purrr::map_lgl(.cal, ~ lubridate::int_end(.x) < lubridate::now())))]] %>% lubridate::int_end() %>% lubridate::as_date() == last_bar}
+   # AND there is data for .dat
+   lgl[3] <- HDA::go(.dat)
+   message(lgl)
+   if ( all(lgl) ) {
      attr(.dat, "Sym") <- .sym
      return(.dat)
    }
-   
   # Retrieve the updated data
   message(paste0("Retrieving data for ",.sym))
   new_bars <- AlpacaforR::get_bars(ticker = .sym, from = last_bar, to = lubridate::today())[[1]]
