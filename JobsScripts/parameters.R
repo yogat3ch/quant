@@ -5,7 +5,6 @@ params$live <- F
 
 # The Portfolio google sheet
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
-params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 
 # Fixed windows
 params$wind  <-  c(weeks = 5, moonphase = 5 * 2, mooncycle = 5 * 4, quarters = 5 * 12)

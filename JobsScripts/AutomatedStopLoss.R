@@ -2,6 +2,7 @@
 # Packages
 HDA::startPkgs(c("dplyr","magrittr","AlpacaforR", "rlang"))
 setwd("~/R/Quant/JobsScripts")
+params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 # args <- (commandArgs(TRUE))
 # #R CMD BATCH --no-save --no-restore '--args a=1 b=c(2,5,6)' test.R test.out &
 # ##args is now a list of character vectors

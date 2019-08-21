@@ -1,8 +1,7 @@
 HDA::startPkgs(c("magrittr","tidyverse","rlang"))
 setwd("~/R/Quant/JobsScripts")
 message(paste0("Begin AutomatedStopLoss sourced from ",basename(stringr::str_extract(commandArgs(trailingOnly = FALSE), "(?<=script\\s\\=\\s\\')[A-Za-z0-9\\/\\:\\.\\_]+") %>% .[!is.na(.)]), " at ", lubridate::now()," From location: ",getwd()))
-googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
-# ----------------------- Sun Aug 18 08:53:47 2019 ------------------------#
+params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")# ----------------------- Sun Aug 18 08:53:47 2019 ------------------------#
 # Load Files
 # TODO(could use optimization to only retrieve positions_new once per day)
 try({source("~/R/Quant/JobsScripts/parameters.R")}) # principal and TSLvars
