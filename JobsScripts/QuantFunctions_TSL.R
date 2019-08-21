@@ -48,12 +48,23 @@ TSL <- function(v, .args, verbose = F) {
       price <- as.numeric(v[i, cl_nm[["low"]], drop = T])
       peak <- as.numeric(max(v[dayi:i, cl_nm[["high"]], drop = T]))
       
-      if (i == nrow(v)) break
+      if (i == nrow(v)) {
+        # Add a variable to flag for an open order that does not sell by the end of the data
+        .open <- T
+        break
+        }
       i <- i + 1
     }
     pct_gain <- (mean(as.numeric(v[i, cl_nm[c("high","low","close")], drop = T])) - as.numeric(v[dayi, cl_nm[["close"]], drop = T])) / as.numeric(v[dayi, cl_nm[["close"]], drop = T])
   # return the percent change of the original price and the date on which the TSL is triggered.
+    #TODO Assign .open to F and test
+    if (!HDA::go(.open)) .open <- F
+    if (.open) {
+      out <- c(pct_gain, NA)
+    } else {
       out <- c(pct_gain, v[i, cl_nm[["time"]], drop = T])
+    }
+      
       
     return(out)
   })

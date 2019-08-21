@@ -2,16 +2,23 @@ params <- new.env()
 HDA::startPkgs(c("magrittr"))
 params$taxp <- "stts"
 params$live <- F
+
+# The Portfolio google sheet
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
+
+# Fixed windows
 params$wind  <-  c(weeks = 5, moonphase = 5 * 2, mooncycle = 5 * 4, quarters = 5 * 12)
 
+# Paths to the most recent data saves
 params$paths <- list(Positions_tsl = "~/R/Quant/Positions_tsl2019-07-18.Rdata", 
                      Positions_ts = "~/R/Quant/Positions_ts_rv_iv2015-07-27_2019-07-16.Rdata",
                      Positions_new = "~/R/Quant/Positions_new.Rdata")
 
+# Read the columns from the Orders sheet in their appropriate classes
 params$Orders_cols <- c(Platform= 'c',id= 'c',client_order_id= 'c',created_at= 'T' ,updated_at= 'T',submitted_at= 'T',filled_at= 'T',expired_at= 'T',canceled_at= 'T' ,failed_at= 'T',asset_id= 'c',symbol= 'c',asset_class= 'c',qty= 'd',filled_qty='d' ,filled_avg_price= 'd',order_type= 'c',type= 'c',side= 'c',time_in_force= 'c',limit_price= 'd',stop_price= 'd',status= 'c',extended_hours = 'l', CB= 'd',GL= 'd',TSL= 'c',live= 'l',SID ='c')
 
+#Create Trailing stop loss types
 params$TSLvars <- append(expand.grid(.retro = c(1,2,4,12), .hilop = seq(.5,.9,.1)) %>% purrr::pmap( function(.retro,.hilop){list(tslret = list(retro = lubridate::weeks(.retro), hilop = .hilop))}),expand.grid(.retro = c(1,2,4,12), .m = c(1,1.5,2,2.5)) %>% purrr::pmap( function(.retro,.m){list(tslsd = list(retro = lubridate::weeks(.retro), m = .m))})) %>% append(seq(.04,.24,.02) %>% setNames(rep("tslp",length(.))) %>% as.list %>% purrr::map(~c(tslp = .x)))
 names(params$TSLvars) <- purrr::map(params$TSLvars, .f = function(.x){
   if (names(.x) == "tslsd") nm <- paste("tslsd",paste0("x",.x[[1]][[2]]),stringr::str_match_all(.x[[1]][1], "(day|year|month|hour|minute)\\s\\=\\s([1-9]{1,2})") %>% .[[1]] %>% .[, -1] %>% paste0(collapse = ""), sep = "_") else if (names(.x) == "tslret") nm <- paste("tslret",paste0("px",.x[[1]][[2]]),stringr::str_match_all(.x[[1]][1], "(day|year|month|hour|minute)\\s\\=\\s([1-9]{1,2})") %>% .[[1]] %>% .[, -1] %>% paste0(collapse = ""), sep = "_") else if (names(.x) == "tslp") nm <- paste("tslp",.x, sep = "_")
@@ -20,7 +27,7 @@ names(params$TSLvars) <- purrr::map(params$TSLvars, .f = function(.x){
 
 
 
-
+# Function for calculating the amount of the trailing stop loss given data and TSL arguments which includes the TSLvar item and the date of the current point in time
 attr(params$TSLvars, "tsl_amt") <- function(.data, .args, verbose = F){
   # Make the names simple for following if statements
   tsl_type <- stringr::str_extract(names(.args)[1], stringr::regex("^[A-Za-z]+"))
@@ -116,6 +123,7 @@ params$AlpacatoR_bars_mutate <- function(l) {
   return(out)
 }
 
+# Function for loading data quickly
 params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NULL) {
   if (is.null(reg) & is.null(object)) {
     reg <- ".Rdata$"
@@ -148,4 +156,93 @@ params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NUL
     save(list = name, file = fn[as.numeric(i)])
   }
 }
-#$
+
+# Function for retrieving new data
+# For Debugging:
+#rm(list = c(".dat", "last_bar", "local_fn", "date_history", "td_nm", "nms", ".cal", "cal", "lgl", "from_weeks", "new_data"))
+params$getPositions_new <- function(Positions_v, params){
+dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
+  # Get the Historical Data filename from the HD
+  local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.sym,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
+  message(local_fn)
+  date_history <- stringr::str_extract_all(local_fn, "\\d{4}\\-\\d{2}\\-\\d{2}") %>% do.call("c", .) %>% lubridate::ymd()
+  # Get the last bar recorded
+  last_bar <-  date_history %>% max()
+  message(paste0("Last bar: ",last_bar))
+  message(paste0("Filename: ",basename(local_fn)))
+  message(HDA::go(local_fn))
+  #TODO HDA::go is not working for this character vector
+  if (HDA::go(local_fn)) {
+    # Load the historical data
+    .dat <- readr::read_csv(file = local_fn[stringr::str_which(local_fn, as.character(last_bar))])
+    # Get the column with the date or time
+    td_nm <- stringr::str_extract(colnames(.dat), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
+    # If it's uppercase from earlier versions convert it to lower
+    if (grepl("T", td_nm, fixed = T)) {
+      message("Renaming")
+      n.td_nm <- tolower(td_nm)
+      .dat %<>% dplyr::rename(!!n.td_nm := !!td_nm)
+      td_nm <- n.td_nm
+    }
+    # Get the columns corresponding to the get_bars call
+    nms <- c(td_nm, "open","high","low", "close", "volume")
+    nms <- rlang::syms(nms)
+    .dat %<>% dplyr::select(!!! nms)
+    
+  } else {
+    # If no data, get 241 data points previous
+    from_weeks <- 241/5 + 2 
+    cal <- AlpacaforR::get_calendar(lubridate::today() - lubridate::weeks(from_weeks), lubridate::today())
+    while (nrow(cal) < 241) {
+      cal <- AlpacaforR::get_calendar(lubridate::today() - lubridate::weeks(from_weeks), lubridate::today())
+      from_weeks <- {241 - nrow(cal)} %/% 5 + 1 + from_weeks
+    }
+    last_bar <- cal[1, 1]
+  }
+  .cal <- AlpacaforR::get_calendar(from = lubridate::today() - lubridate::weeks(2), to = lubridate::today() + lubridate::weeks(2))
+  .cal <- purrr::pmap(.cal, function(date, open, close){
+    lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EST"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EST"))
+  })
+  lgl <- vector()
+  # If it is NOT during market hours
+  lgl[1]<- {!purrr::map_lgl(.cal, now = lubridate::now(), function(.x, now) lubridate::`%within%`(now,.x)) %>% any}
+  # AND the last_bar is equal to the last market day 
+  lgl[2] <- {.cal[[max(which(purrr::map_lgl(.cal, ~ lubridate::int_end(.x) < lubridate::now())))]] %>% lubridate::int_end() %>% lubridate::as_date() == last_bar}
+  # AND there is data for .dat
+  lgl[3] <- HDA::go(.dat)
+  message(lgl)
+  if ( lgl[1] & lgl[3] | lgl[2] & lgl[3] ) {
+    attr(.dat, "Sym") <- .sym
+    return(.dat)
+  }
+  # Retrieve the updated data
+  if (debug){
+    a <- readline(paste0("Retrieve data for ",.sym,"?"))
+    if (a == "n") stop("Quitting.") else if (a == "s") return(.dat)
+  }
+  message(paste0("Retrieving data for ",.sym))
+  new_bars <- AlpacaforR::get_bars(ticker = .sym, from = last_bar, to = lubridate::today())[[1]]
+  if (HDA::go(.dat)) { # if the data exists on the HD
+    # Combine it with the new data
+    keep_ind <- .dat[[td_nm]] %>% lubridate::as_date() != new_bars[["time"]] %>% lubridate::as_date()
+    new_data <- rbind.data.frame(.dat[keep_ind, ], new_bars)
+  } else new_data <- new_bars # If it doesn't just make the new_data
+  # Save the new data
+  
+  readr::write_csv(new_data,  path = paste0("~/R/Quant/PositionData/",.sym, lubridate::as_date(min(new_data[["time"]])),"_", lubridate::as_date(max(new_data[["time"]])), ".csv"))
+  # If previous files exist
+  if (HDA::go(local_fn) & last_bar != lubridate::today()) {
+    
+    purrr::walk(local_fn[stringr::str_detect(local_fn, as.character(last_bar))],file.remove) 
+  }
+  attr(new_data, "Sym") <- .sym
+  return(new_data)
+})
+return(dat)
+}
+
+
+# Get the time index for a data.frame or xts
+params$getTimeIndex <- function(.dat){ 
+  stringr::str_extract(colnames(.dat), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
+}

@@ -11,18 +11,19 @@ if (!HDA::go("train_rvs")) {train_rvs <- NULL ; message("No train_rvs, setting a
 mod.packages <- c("doParallel","iterators","parallel","foreach","earth", "RSNNS", "xgboost", "plyr") # [package dependencies]
 HDA::startPkgs(mod.packages)
 total.time <- system.time({
-dat_dt <- purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = train_rvs, function(.dat, .b_tsl, .mS, train_rvs){
+purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = train_rvs, function(.dat, .b_tsl, .mS, train_rvs){
   tick <- attr(.dat, "Sym") %>% unlist # Get the symbol of the data and store it
   message(paste0("Training: ",tick," Now: ",lubridate::now()))
   if (zoo::is.zoo(.dat)) .dat <-  zoo::fortify.zoo(.dat) # If still xts, convert to df
-  if (is.null(train_rvs) & is.null(.b_tsl)) {train_rvs <- colnames(.dat)[grep("rv$", colnames(.dat))]} # If there are no specified RVs to train or a best TSL object, then train for all RVs
   if (!is.null(.b_tsl)) train_rvs <- c(.b_tsl[["tsl_types"]][["tsl"]], train_rvs) # If best_tsl is included then add that RV to the ones to be trained
-  try({load(file = paste0("~/R/Quant/MdlBkp/",tick, "_cl.Rdata"))}) #Try to load previous models
+  train_rvs <- paste0(train_rvs,"_rv")
+    try({load(file = paste0("~/R/Quant/MdlBkp/",tick, "_cl.Rdata"))}) #Try to load previous models
   ob <- get0(paste0(tick, "_cl"), mode = "list") # If it loads, save it as ob
   # Remove models from object
-  if(!is.null(ob) & sum(train_rvs %in% names(ob)) > 0) ob[train_rvs] <- NULL
-  if(!is.null(ob) & sum(!train_rvs %in% names(ob)) > 0) train_rvs <- train_rvs[!train_rvs %in% names(ob)] # Filter the rvs to train by what already exists in the object
-  train_rvs <- paste0(train_rvs,"_rv")
+  if(!is.null(ob) & sum(train_rvs %in% names(ob)) > 0) {
+    ob <- ob[!names(ob) %in% train_rvs]
+    }
+  
   message(paste0(tick," RVs: ", paste(train_rvs, collapse = ", ")))
   if (length(train_rvs) < 1) {
     message("No models to train.")
@@ -37,7 +38,6 @@ dat_dt <- purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), tr
     } # If not enough data say so and return
   rm(list = c(paste0(tick,"_cl")))
   #Initiate packages
-  
   out <- purrr::map(train_rvs, pf = sys.frame(sys.nframe()), function(nm, pf){
       td_nm <- stringr::str_extract(names(pf$.dat), "^time$|^date$") %>% purrr::discard(is.na)
       rvs <- stringr::str_extract_all(names(pf$.dat), ".*rv$|.*ind$|.*type$") %>% purrr::compact() %>% unlist %>% .[{. != nm}]
@@ -105,8 +105,9 @@ dat_dt <- purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), tr
     } else assign(paste0(tick,"_cl"), out)
     save(list = paste0(tick,"_cl"), file = paste0("~/R/Quant/MdlBkp/",tick,"_cl.Rdata"), compress = "xz")
     message(paste("Saved",tick, "Object"))
+    message(paste0(tick, " cleanup:", paste(ls(all.names = T), collapse = ",")))
     if (!is.null(ob)) rm(list = c(paste0(tick,"_cl")))
-    return(out)
+    return(NULL)
 })
 })
 HDA::unloadPkgs(mod.packages)

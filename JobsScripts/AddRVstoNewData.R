@@ -43,8 +43,8 @@ run.time <- system.time({
         Time <-  tibbletime::get_index_col(x)
         x <- x[!names(x) %in% tibbletime::get_index_char(x)]
         rvs <- cbind(Time = Time, rvs, x)
-        colnames(rvs) <- c("Time",clm.nms, names(x))
-        out <- tibbletime::tbl_time(rvs, index = "Time")
+        colnames(rvs) <- c("time",clm.nms, names(x))
+        out <- tibbletime::tbl_time(rvs, index = "time")
       }
       attr(out, "Sym") <- sym
       out

@@ -7,7 +7,6 @@ if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
   load("dat.Rdata")}
 ## @knitr Add attributes for debugging purposes  
 message("Add attributes for debugging purposes ")
- message("Add attributes for debugging purposes")
 dat <- purrr::map2(.x = dat, .y = names(dat), function(.x, .y){
  attr(.x, "Sym") <- .y
   return(.x)
@@ -32,7 +31,7 @@ dat <- purrr::map(dat, function(.x){
 ## @knitr Add Ephemeris Data 
 message("Add Ephemeris Data")
 ephData <- readr::read_csv("~/R/Quant/ephData.csv")
-ephData %<>% select(time, dplyr::ends_with("SI"))#, - dplyr::starts_with("NEP"), - dplyr::starts_with("PLU"),  - dplyr::starts_with("URA"))
+ephData %<>% select(time, dplyr::ends_with("SI"), - dplyr::starts_with("NEP"), - dplyr::starts_with("PLU"),  - dplyr::starts_with("URA"))
 dat <- purrr::map(dat, edat = ephData, function(.x, edat){
   s <- attr(.x, "Sym")
   td_nm <- stringr::str_extract(names(.x), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]

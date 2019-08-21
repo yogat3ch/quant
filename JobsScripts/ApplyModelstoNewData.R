@@ -8,48 +8,62 @@ if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
   message("Loaded as background job, loading dependencies...")
   }
 if (!exists("OOTbegin", mode = "numeric")) OOTbegin <- NULL
-fns <- list.files("~/R/Quant/MdlBkp", full.names = T, pattern = ".Rdata$")
-names(fns) <- stringr::str_match(fns, "\\/MdlBkp\\/([A-Z]+)")[,2]
-dat <- purrr::imap(fns, best_tsl = best_tsl, newdata = dat, OOTbegin = OOTbegin, function(.x, .y, best_tsl, newdata, OOTbegin){
-  ob_chr <- stringr::str_match(.x, "\\/MdlBkp\\/([\\w\\_]+)")[,2]
-  if (!any(.y %in% names(newdata))) return(NULL)
-  message(paste0("Loading: ", .y))
-  try({load(.x)})
-  tsl <- purrr::pluck(best_tsl, .y)
-  bestTSL_chr <- tsl[["tsl_types"]][["tsl"]] %>% paste0("_rv")
-  tsl.param_chr <- tsl[["tsl_types"]][["pct"]]
+# For debugging:
+list(.fn = fns, .s = names(dat), .b_tsl = best_tsl, .dat = dat) %>% purrr::map(2) %>% append(list(OOTbegin = OOTbegin)) %>% list2env(envir = .GlobalEnv)
+pf <- parent.frame()
+#rm(list = c(".fn", ".b_tsl",".dat", "ob_chr"))
+dat <- purrr::pmap(list = list(.fn = fns, .s = names(dat), .b_tsl = best_tsl, .dat = dat), OOTbegin = OOTbegin, function(.fn, .s, .b_tsl, .dat, OOTbegin){
+  # Get the name of the object
+  ob_chr <- stringr::str_match(.fn, "\\/MdlBkp\\/([\\w\\_]+)")[,2]
+  message(paste0("Loading: ", .s))
+  # Load the data
+  try({load(.fn)})
+  
+  .b_tsl$tsl_types %<>% dplyr::mutate_at(dplyr::vars(tsl),~ paste0(., "_rv"))
   ob <- get0(ob_chr)
-  if (any(duplicated(names(ob)))) { # if there are duplicates, delete and resave
-    assign(ob[-which(duplicated(names(ob)))], ob_chr)
-    save(list = ob_chr, file = paste0("~/R/Quant/MdlBkp/",ob_chr,".Rdata"), compress = "xz")
-  }
-  newdata <- purrr::pluck(newdata, .y)
-  if (tibble::is_tibble(newdata) & !is.null(OOTbegin)) newdata <- newdata[newdata %>% tibbletime::get_index_col() > OOTbegin,] else if (xts::is.xts(newdata) & !is.null(OOTbegin)) newdata <- newdata[time(newdata) > OOTbegin,]
-
-  # Get the TSL threshold parameter
-  preds <- list()
-  Cum.Returns <- vector("numeric")
-  Returns <- vector("numeric")
-  for (i in seq_along(bestTSL_chr)) {
-    if (xts::is.xts(newdata)) {
-      pred <- xts::cbind.xts(rowMeans(predict(ob[[bestTSL_chr[i]]], newdata = newdata)), newdata)
-      colnames(pred)[1] <- paste0(bestTSL_chr[i], "_pred")
+  rm(list = ob_chr)
+  # For Debugging:
+  #list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
+  preds <- purrr::pmap(list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct), pf = parent.frame(), function(.tsl, .pct, pf) {
+    # Preprocess data
+    .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ."))
+    .td_nm <- pf$params$getTimeIndex(pf$.dat)
+    # ----------------------- Fri Jul 26 14:19:16 2019 ------------------------#
+    # PreProcessing Data
+    # 1. Make model frame
+    .out <- model.frame(.frm, pf$.dat)
+    # 2. remove any columns that may be matrices
+    .out <- dplyr::mutate_if(.out, .predicate = is.matrix, ~ as.vector(.))
+    # 3. Create dummyVars from factors
+    library(caret)
+    .out <- caret::dummyVars(.frm, data = .out) %>% predict(., newdata = .out)
+    HDA::unloadPkgs("caret")
+    .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ", paste(pf$ob[[.tsl]][[1]][["coefnames"]], collapse = " + ")))
+    .out <- cbind.data.frame(pf$.dat[, .tsl], .out)
+    .out <- model.frame(.frm, as.data.frame(.out))
+    if (xts::is.xts(.out)) {
+      # Add Prediction column
+      pred <- xts::cbind.xts(rowMeans(predict(pf$ob[[.tsl]], newdata = .out)), pf$.dat[, c(.td_nm,"open","high","low","close", paste0(.tsl, "_ind"))], .out)
+      colnames(pred)[1] <- paste0(.tsl, "_pred")
     } else {
-      pred.name <- paste0(bestTSL_chr[i],"_pred")
-      pred <- rowMeans(predict(ob[[bestTSL_chr[i]]], newdata = newdata))
-      td_nm <- stringr::str_extract(names(newdata), "^time$|^date$") %>% purrr::discard(~ is.na(.))
-      pred <- cbind.data.frame(pred, newdata) %>% dplyr::rename_at(1, ~ pred.name) %>% dplyr::select(!!td_nm, dplyr::everything())
-      ret <- optimReturn(pred, percent = tsl.param_chr[i], returns.clm = paste0(bestTSL_chr[i], "_pred"), paste0(bestTSL_chr[i], "_ind"))
-      ret.name <- paste0(pred.name, "_action")
-      Cum.Returns[i] <- attr(ret,"Cum.Returns")
-      Returns[i] <- attr(ret, "Returns")
-      preds[[i]] <- cbind.data.frame(ret, pred[,2, drop = F]) %>% dplyr::rename_at(1, ~ ret.name)
+      # Add Prediction column
+      pred <- cbind.data.frame(rowMeans(predict(pf$ob[[.tsl]], newdata = .out)), pf$.dat[, c(.td_nm,"open","high","low","close", paste0(.tsl, "_ind"))], .out)
+      colnames(pred)[1] <- paste0(.tsl, "_pred")
+      
     }
-  }
-  out <- cbind.data.frame(do.call("cbind.data.frame", preds), newdata) %>% dplyr::select(!!td_nm, dplyr::everything())
+    # Create returns matrix
+    ret <- pf$optimReturn(pred, percent = .pct, returns.clm = paste0(.tsl, "_pred"), tslindex.clm = paste0(.tsl, "_ind"), .opts = list(bs.v = T))
+    .out <- cbind.data.frame(ret$.opts[, which.max(ret$returns[,"Cum.Returns"])], pred)
+    colnames(.out)[1] <- paste0(.tsl, "_action")
+    attr(.out, "Returns") <- ret$returns
+    return(.out)
+})
+  #Name the output list
+  names(preds) <- .b_tsl$tsl_types$tsl
+  out <- cbind.data.frame(do.call("cbind.data.frame", preds), .dat) %>% dplyr::select(!!td_nm, dplyr::everything())
   attr(out,"Cum.Returns") <- Cum.Returns
   attr(out,"Returns") <- Returns
-  attr(out, "Sym") <- .y
+  attr(out, "Sym") <- .s
   rm(ob_chr)
   return(out)
 })
