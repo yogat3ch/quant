@@ -659,37 +659,17 @@ bymin <- list.files(path = "PositionData", pattern = "bymin", full.names = T) %>
 
 # Generic Fn to add all Signals and Response Variables
 
-```{r 'Generic Add Signals'}
-# First change Positions to object entitled dat
-dat <- Positions_ts
-# Set the signal windows desired
-wind  <-  list(weeks = lubridate::weeks(1), moonphase = lubridate::weeks(2), mooncycle = lubridate::weeks(4), quarters = lubridate::weeks(4*3))
-# Save the file
-save(dat, wind, file = "dat.Rdata")
-rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
-
-# Once Completed return the variable to it's original name and save it
-dat %>% assign("Positions_ts_iv", . , envir = globalenv()) 
-#Save
-rstudioapi::setCursorPosition(SL)
-> 
-
-
-read_csv
 
 
-
-
-```
-
-```{r 'Trim Positions_ext with IVs back to Positions_ts length'}
+```{r 'Add Signals to Extended dataset and trim to match Position_ts'}
+#params$dataUtil()
 dat <- Positions_ext
 # Set the signal windows desired
-wind  <-  list(weeks = lubridate::weeks(1), moonphase = lubridate::weeks(2), mooncycle = lubridate::weeks(4), quarters = lubridate::weeks(4*3))
+wind  <-  params$wind
 # Save the file
 save(dat, wind, file = "dat.Rdata")
 rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
-Positions_ext <- purrr::map2(Positions_ts, dat, function(.x, .y){
+Positions_ts <- purrr::map2(Positions_ts, dat, function(.x, .y){
   s <- attr(.x, 'Sym')
   if (xts::is.xts(.x) & xts::is.xts(.y)) {
     out <- window(.y, start = min(time(.x)))
@@ -700,10 +680,54 @@ Positions_ext <- purrr::map2(Positions_ts, dat, function(.x, .y){
   attr(out, 'Sym') <- s
   return(out)
 })
-
+# Once Completed return the variable to it's original name and save it
+assign("Positions_ts_iv", Positions_ts , envir = globalenv()) 
 ```
+
+```{r 'Add RVs to Data'}
+dat <- purrr::map(Positions_ts_rv, ~ dplyr::select(.x, - dplyr::ends_with("rv"), - dplyr::ends_with("ind")))
+# Set the signal windows desired in parameters.r
+source("~/R/Quant/JobsScripts/parameters.R")
+add <- F
+save(dat, TSLvars, add, file = "~/R/Quant/dat.Rdata")
+rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+# Save
+rstudioapi::setCursorPosition(SL)
+```
+
+```{r 'Load Positions_ts_rv from HD'}
+Positions_ts_rv <- purrr::map(Positions_v, function(.x){
+  message(paste0("Finding files: ", .x))
+    .a_f <- list.files("~/R/Quant/PositionData", pattern = .x, full.names = T)
+    if (.x == "GOOG") .rvs <- .a_f[.a_f %>% stringr::str_which("GOOG(?!L).*rv\\.csv$")] else .rvs <- .a_f[.a_f %>% stringr::str_which("rv\\.csv$")]
+      message(paste0("Reading data: ", .x))
+      .rv_data <- readr::read_csv(.rvs)
+  if (dplyr::select(.rv_data, dplyr::ends_with("ind")) %>% purrr::map(~ is.numeric(.x)) %>% any) {
+    .rv_data <- dplyr::mutate_at(.rv_data, dplyr::vars(dplyr::ends_with("ind")), ~ lubridate::as_datetime(., origin = lubridate::origin))
+  }
+      td_nm <- stringr::str_extract(names(.rv_data), stringr::regex("^time$|^date$", ignore_case = T)) %>% purrr::keep(~ !is.na(.x)) %>% .[1]
+      #If any of the sell indexes are greater than the maximum time index then make them the max time index. Necessary to make up for the deletion of a row due to the artifact.
+      t_max <- max(.rv_data[[td_nm]])
+  if (any(dplyr::select(.rv_data, dplyr::ends_with("ind")) %>% purrr::map(~ max(.x, na.rm = T)) > t_max)) {
+    .rv_data <- dplyr::mutate_at(.rv_data, dplyr::vars(dplyr::ends_with("ind")), ~ {
+      if (.x > t_max) .x <- NA_complex_ else .x
+      .x
+    })
+  }
+    attr(.rv_data, "Sym") <- .x
+   # Remove wierd artifact column
+    # .rv_data <- .rv_data[- nrow(.rv_data), ]
+
+    # readr::write_csv(.rv_data, path = paste0("~/R/Quant/PositionData/",.x , min(.rv_data[[td_nm]]) %>% lubridate::as_date(), "_", max(.rv_data[[td_nm]]) %>% lubridate::as_date(), "_rv.csv"))
+     return(.rv_data)
+})
+```
+
 ```{r 'Join with existing RVs'}
-Positions_ts_rv_iv <- purrr::map2(Positions_ext, Positions_ts_rv, function(.x, .y){
+Positions_ts_iv <- purrr::imap(Positions_ts_iv, function(.x,.y){attr(.x, "Sym") <- .y
+return(.x)})
+
+Positions_ts_rv_iv <- purrr::map2(Positions_ts_iv, Positions_ts_rv, function(.x, .y){
   s <- attr(.x, 'Sym')
   if (xts::is.xts(.x) & xts::is.xts(.y)) {
     out <- xts::merge.xts(.x, .y, join = "left")
@@ -719,18 +743,7 @@ Positions_ts_rv_iv <- purrr::map2(Positions_ext, Positions_ts_rv, function(.x, .
 
 
 
-```{r 'Add RVs to Data'}
-dat <- Positions_ts
-# Set the signal windows desired in parameters.r
-source("~/R/Quant/JobsScripts/parameters.R")
-add <- F
-save(dat, TSLvars, add, file = "~/R/Quant/dat.Rdata")
-rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
-# Once Completed return the variable to it's original name and save it
-dat %>% assign("Positions_ts_rv", . , envir = globalenv()) 
-# Save
-rstudioapi::setCursorPosition(SL)
-```
+
 
 
 
@@ -745,10 +758,10 @@ rstudioapi::setCursorPosition(SL)
 ```
 
 
-```{r 'Function to Optimize Returns'}
+```{r 'Map Returns'}
 pct <- seq(.00, .2, .01)
 names(pct) <- seq(.00, .2, .01)
-dat <- Positions_ts
+dat <- Positions_ts_rv
 .opts <- list(bs.v = T, with.gains = F, max.gain = T)
 save(dat, pct, .opts, file = "dat.Rdata")
 rstudioapi::jobRunScript(path = "JobsScripts/MapReturns.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
@@ -799,7 +812,9 @@ Positions_tsl <- Positions_ret %>% purrr::map_depth(.depth = 2, .f = function(.x
   out <- cbind.data.frame(out$trades, out$returns %>% dplyr::select(- ".id"))
   return(out)
   }) %>% purrr::map(~data.table::rbindlist(., idcol = T))
-Positions_tsl <- Positions_tsl %>% purrr::map(function(.x){names(.x)[c(1,2)] <- c("tsl","pct")
+Positions_tsl <- Positions_tsl %>% purrr::map(function(.x){
+  names(.x)[c(1,2)] <- c("tsl","pct")
+  .x %<>% dplyr::mutate_at(dplyr::vars(pct),~as.numeric(.)) 
 return(.x)
 })
 Positions_tsl_maximums <- purrr::map(Positions_tsl, function(.x){
@@ -861,6 +876,7 @@ best_tsl <- purrr::map2(Positions_tsl[names(dat)], .y = dat, tslv = params$TSLva
   out$tsl_types %<>% dplyr::filter(!tsl == existing_tsl) }
   # Return the TSLvars parameters for each of those TSL types
   out$tslv <- tslv[out$tsl_types[["tsl"]]]
+  out$tsl_types %<>% dplyr::mutate_at(dplyr::vars(pct), ~ as.numeric(.)) 
   return(out)
   })
 dat <- Positions_ts_rv_iv
@@ -875,7 +891,7 @@ rstudioapi::jobRunScript(path = "MdlBkp/CaretTuningGrids.R", workingDir = getwd(
 
 
 ```{r 'Tuning Grids and MethodList'}
-methodlist <- c("xgbTree", "xgbDART", "mlpWeightDecayML", "bagEarthGCV")
+methodlist <- c("xgbTree", "xgbDART", "mlpWeightDecayML", "bagEarth")
 tGs <- purrr::map(overall.performance, methodlist = methodlist, function(.x, methodlist){
   .x <- .x[names(.x) %in% methodlist]
   out <- purrr::imap(.x, function(.x, .y){
@@ -917,7 +933,7 @@ modelSpecs <- purrr::map(modelSpecs, tG = tuningGrids, mlist = methodlist, funct
   }))) { #if there are unset tuning grids in the modelspec for which tuning grids have been specified manually
     mS[names(tG)] <- purrr::imap(mS[names(tG)], pf = pf, function(.x,.y, pf){
       .x$tuneLength <- NULL
-      .x$tuningGrid <- pf$tG[[.y]]
+      .x$tuneGrid <- pf$tG[[.y]]
       return(.x)
     })
   }
@@ -957,9 +973,10 @@ load(file = params$paths$Positions_tsl)
 #methodList <- c("xgbTree", "C5.0", "mlpKerasDropout", "mlpKerasDecay") # Add method names. See http://topepo.github.io/caret/available-models.html for details
     # If first run, use tunelength. If final or subsequent runs with a refined tuning grid, provide tuneGrids in the lapply call (not in it's function)
 
-dat <- Positions_ts_rv_iv[8:20] # Pass the list of timeseries objects for which algorithms will trained
+dat <- Positions_ts_rv_iv[11:20] # Pass the list of timeseries objects for which algorithms will trained
 train_rvs <- NULL
 best_tsl <- best_tsl[names(dat)]
+modelSpecs <- modelSpecs[11:20]
 save(modelSpecs, dat, best_tsl, file = "dat_dt.Rdata")
 # ----------------------- Mon Jun 03 06:12:02 2019 ------------------------#
 # Important to filter all none profitable signals from the type prediction
@@ -1043,7 +1060,8 @@ Positions_ts$BYND <- BYND
 
 # Test Out of Time
 ## Create OOT & Add Signals 
-```{r 'Gather new Data from Portfolio Sheet'}
+```{r 'Gather new Data from Portfolio Sheet', eval = F}
+# Deprecated - Google Finance is unreliable
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 shts <- purrr::map(.x = c('Holdings', '(Hi)' , '(Lo)', '(Op)', '(Vo)', '(cP)'), gs = gsPositions, .f =  function(.x, gs){
@@ -1082,29 +1100,36 @@ Positions_new <- purrr::map(Positions_v, shts = shts, function(.x, shts){
 
 
 ```{r 'Add Signals to New Data'}
-dat <- Positions_ext
+dat <- params$getPositions_new(Positions_v, params)
 # Set the signal windows desired
 # wind  <-  c(weeks = 7, moonphase = 7*2, mooncycle = 7*4, quarters = 7*4*3)
 # Save the file
 save(dat, file = "dat.Rdata")
 rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
-Positions_new <- dat
-save("Positions_new", file = paste0("Positions_new.Rdata"))
 ```
 ```{r 'Add RVs to New Data'}
 # After the previous completes
-save(dat, wind, TSLvars, file = "dat.Rdata") #TSLvars from Chunk 35: Add RVs to Data
-rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+wind
+save(dat, wind, TSLvars, best_tsl, file = "dat.Rdata") #TSLvars from Chunk 35: Add RVs to Data
+rstudioapi::jobRunScript("JobsScripts/AddRVstoNewData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
 Positions_new <- dat
 save("Positions_new", file = paste0("Positions_new.Rdata"))
 ```
 
 ```{r 'Test ML Ensemble Models with OOT Data'}
 # Supply if OOT data is later than training data, if OOT data is older than training data do not supply
-OOTbegin <- lubridate::ymd({Positions_ts[[1]] %>% tibbletime::get_index_col() %>% max})
-dat <- Positions_new
-best_tsl <- Positions_tsl
-save(dat, best_tsl, OOTbegin, file = "dat.Rdata")
+
+OOTbegin <- Positions_ts_rv_iv[[1]][[params$getTimeIndex(Positions_ts_rv_iv[[1]])]] %>% max
+dat <- params$getPositions_new(Positions_v, params)
+source("~/R/Quant/JobsScripts/AddIVstoData.R", local = T)
+# Add Dependent variables
+source("~/R/Quant/JobsScripts/AddRVstoNewData.R", local = T)
+fns <- list.files("~/R/Quant/MdlBkp", full.names = T, pattern = ".Rdata$")
+names(fns) <- stringr::str_match(fns, "\\/MdlBkp\\/([A-Z]+)")[,2]
+fns <- fns[names(dat)]
+#best_tsl <- Positions_tsl
+best_tsl <- best_tsl[names(dat)]
+save(dat, best_tsl, fns, OOTbegin, file = "dat.Rdata")
 rstudioapi::jobRunScript("JobsScripts/ApplyModelstoNewData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
 purrr::map(dat, attr, "Cum.Returns")
 Positions_strat <- dat
