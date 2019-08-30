@@ -20,14 +20,15 @@
 # list(.dat = Positions_ts[[1]], percent = .05, returns.clm = "tslp_0.18_rv", tslindex.clm = NULL, .opts = list(bs.v = F, with.gains = F, max.gain = F)) %>% list2env(envir = .GlobalEnv)
 # test <- optimReturn(.dat = Positions_ts[[1]], returns.clm = "tslp_0.18_rv", percent = .05, .opts = list(bs.v = T, with.gains = T, max.gain = T))
  #filter_all(.vars_predicate = dplyr::all_vars({. != 0})) %>% View
-optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm = NULL, .opts = list(bs.v = F, with.gains = F, max.gain = F)) {
+optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm = NULL, .opts = list(bs.v = F, with.gains = F, max.gain = F), debug = F) {
   # Set default values to avoid errors on if statements
   if (is.null(.opts$bs.v)) .opts$bs.v <- F 
   if (is.null(.opts$with.gains)) .opts$with.gains <- F 
   if (is.null(.opts$max.gain)) .opts$max.gain <- F
   tslindex.clm <- ifelse(!is.null(tslindex.clm),tslindex.clm,paste0(returns.clm,"_ind"))
   td_nm <- stringr::str_extract(names(.dat), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1]
-  v <- .dat[, c(td_nm, returns.clm, tslindex.clm)] %>% dplyr::mutate_at(dplyr::vars(!!tslindex.clm), dplyr::funs(as.POSIXct, .args = list(origin = lubridate::origin)))
+  .tsl_i <- rlang::enquo(tslindex.clm)
+  v <- .dat[, c(td_nm, returns.clm, tslindex.clm)] %>% dplyr::mutate_at(dplyr::vars((!! .tsl_i)), dplyr::funs(as.POSIXct, .args = list(origin = lubridate::origin)))
   lgl.v <- .dat[, returns.clm, drop = T] > percent
   # if there are no positive values at all
   if (sum(lgl.v) == 0) {
@@ -106,6 +107,7 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
       if (pf$lgl.v[i]) { # if the immediate next value is a positive gain
         sell_dt <- pf$v.ind[i] # Get the date the TSL is sold
         i_sell <- which(pf$v[, pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
+        #if(!HDA::go(i_sell)) browser()
         # If the order is just open and doesn't sell
         if (is.na(sell_dt)) {
           if (.opts$bs.v) {
@@ -136,7 +138,7 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
           with.gains[i] <- pf$v[i, returns.clm, drop = T] # add the returns
         }
         if (.opts$max.gain) {
-          if (!HDA::go("i") | !HDA::go("i_sell")) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
+          if ({!HDA::go("i") | !HDA::go("i_sell")} & pf$debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
           max.gain[i] <- (max(pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - pf$.dat[i, cl_nm[c("close")], drop = T]) / pf$.dat[i, cl_nm[c("close")], drop = T]
         }
         if (total.value %/% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
@@ -153,6 +155,7 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
         if (!HDA::go("i")) break
         sell_dt <- pf$v.ind[i] # Get the date the TSL is sold
         i_sell <- which(pf$v[, pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
+        #if(!HDA::go(i_sell)) browser()
         # If the order is just open and doesn't sell
         if (is.na(sell_dt)) {
           if (.opts$bs.v) {
@@ -183,7 +186,7 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
           with.gains[i] <- pf$v[i, returns.clm, drop = T]
         }
         if (.opts$max.gain) {
-          if (!HDA::go("i") | !HDA::go("i_sell")) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
+          if ({!HDA::go("i") | !HDA::go("i_sell")} & pf$debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
           max.gain[i] <- (max(pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - pf$.dat[i, cl_nm[c("close")], drop = T]) / pf$.dat[i, cl_nm[c("close")], drop = T]
         }
         if (total.value %/% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
