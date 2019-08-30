@@ -73,7 +73,7 @@ dat %>% lapply(TSLvars = params$TSLvars, add = add, clm.nms = clm.nms, verbose =
       .rv_data <- readr::read_csv(.rvs)
       purrr::map(.rvs, ~ file.remove(.x))
       message(paste0("If duplicates: ", s))
-      if (all(names(.rv_data) == names(out))) .rv_data <- rbind.data.frame(out, .rv_data)
+      if (length(setdiff(names(.rv_data), names(out))) == 0) .rv_data <- rbind.data.frame(out, .rv_data)
       message(paste0("Removing duplicates: ", s))
       td_nm <- rlang::sym(td_nm)
       out <- .rv_data %>% dplyr::mutate(date = lubridate::as_date(!!td_nm)) %>% subset(subset = !duplicated(.[["date"]])) %>% dplyr::select(- date) %>% dplyr::arrange(!!td_nm)
