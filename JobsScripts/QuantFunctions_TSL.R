@@ -58,7 +58,7 @@ TSL <- function(v, .args, verbose = F) {
     pct_gain <- (mean(as.numeric(v[i, cl_nm[c("high","low","close")], drop = T])) - as.numeric(v[dayi, cl_nm[["close"]], drop = T])) / as.numeric(v[dayi, cl_nm[["close"]], drop = T])
   # return the percent change of the original price and the date on which the TSL is triggered.
     #TODO Assign .open to F and test
-    if (!HDA::go(.open)) .open <- F
+    if (!HDA::go(".open")) .open <- F
     if (.open) {
       out <- c(pct_gain, NA)
     } else {
