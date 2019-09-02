@@ -30,17 +30,17 @@ dat %>% lapply(TSLvars = params$TSLvars, add = add, clm.nms = clm.nms, verbose =
      tsl_amt <- attr(TSLvars,"tsl_amt")
     if (add) TSLvars <- TSLvars[!nms %in% names(l)[stringr::str_which(names(l),"rv$")] ]
     run.time <- system.time({
-      # rvs <- foreach(x = TSLvars, tsl_amt = purrr::map(1:length(TSLvars), tsl_amt = tsl_amt, function(.x,tsl_amt)return(tsl_amt)), l = purrr::map(1:length(TSLvars), l = l, function(.x,l)return(l)), .inorder = T, .multicombine = T, .combine = cbind, .verbose = T, .packages = c("quantmod","xts","rlang","magrittr", "stringr", "lubridate")) %dopar%
+      #list(x = TSLvars[[47]], y = nms[47], tsl_amt = attr(params$TSLvars, "tsl_amt"), l = dat[[1]]) %>% list2env(envir = .GlobalEnv)
       # rvs <- purrr::pmap(list(x = TSLvars), tsl_amt = tsl_amt, l = l,function(x,tsl_amt,l)
-      # rvs <- foreach(x = TSLvars, tsl_amt = purrr::map(1:length(TSLvars), tsl_amt = tsl_amt, function(.x,tsl_amt)return(tsl_amt)), l = purrr::map(1:length(TSLvars), l = l, function(.x,l)return(l)), .inorder = T, .multicombine = T, .combine = cbind, .verbose = T, .packages = c("quantmod","xts","rlang","magrittr", "stringr", "lubridate")) %dopar% 
-      rvs <- foreach(x = TSLvars, y = nms, tsl_amt = purrr::map(1:length(TSLvars), tsl_amt = tsl_amt, function(.x,tsl_amt)return(tsl_amt)), l = purrr::map(1:length(TSLvars), l = l, function(.x,l)return(l)), .inorder = T, .multicombine = T, .combine = cbind, .verbose = T, .errorhandling = "pass", .packages = c("rlang","magrittr", "stringr", "dplyr", "lubridate")) %dopar% {
+      # rvs <- foreach(x = TSLvars, y = nms, tsl_amt = purrr::map(1:length(TSLvars), tsl_amt = tsl_amt, function(.x,tsl_amt)return(tsl_amt)), l = purrr::map(1:length(TSLvars), l = l, function(.x,l)return(l)), .inorder = T, .multicombine = T, .combine = cbind, .verbose = T, .errorhandling = "stop", .packages = c("rlang","magrittr", "stringr", "dplyr", "lubridate")) %dopar% 
+      rvs <- foreach(x = TSLvars, y = nms, tsl_amt = purrr::map(1:length(TSLvars), tsl_amt = tsl_amt, function(.x,tsl_amt)return(tsl_amt)), l = purrr::map(1:length(TSLvars), l = l, function(.x,l)return(l)), .inorder = T, .multicombine = T, .combine = cbind, .verbose = T, .errorhandling = "stop", .packages = c("rlang","magrittr", "stringr", "dplyr", "lubridate")) %dopar% {
         s <- attr(l, "Sym")
         message(paste0(lubridate::now()," ",s," - Begin: ",y))
           x$tsl_amt <- tsl_amt
           source("~/R/Quant/JobsScripts/QuantFunctions_TSL.R")
           .args <- list(v = l[, stringr::str_which(names(l), stringr::regex("date|time|open|high|low|close", ignore_case = T))], .args = x)
           out <- eval(rlang::call2("TSL", !!!.args))
-        message(paste0(lubridate::now(), " "," - End: ",y))
+      message(paste0(lubridate::now()," ",s," - End: ",y))
         out
       }#)
     })
@@ -58,10 +58,7 @@ dat %>% lapply(TSLvars = params$TSLvars, add = add, clm.nms = clm.nms, verbose =
         rvs <- cbind.data.frame(l, rvs)
         out <- tibbletime::tbl_time(rvs, index = !!td_nm) %>% dplyr::select(!!td_nm, dplyr::everything())
         }
-    
-    
-    
-    
+
   } else out <- l
   attr(out, "Sym") <- s
   message(paste0("Finding files: ", s))
