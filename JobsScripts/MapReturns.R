@@ -22,7 +22,7 @@ ret <- foreach(l = dat, pct = purrr::map(1:length(dat), pct = pct, function(.x, 
        test <- optimReturn(l, percent = .x, returns.clm = y, .opts = env$opts)
        if (HDA::go("test")){
        a <- test[[".opts"]] %>% purrr::compact() %>% dplyr::filter_all(.vars_predicate = dplyr::any_vars({. != 0})) %>%  purrr::imap(function(.x, .y) {
-         if (stringr::str_detect(.y, "bs")) out <- sum(.x[.x > 0]) else if (stringr::str_detect(.y, "gain")) out <- quantile(.x[.x != 0])
+         if (stringr::str_detect(.y, "bs")) out <- sum(.x[.x > 0], na.rm = T) else if (stringr::str_detect(.y, "gain")) out <- quantile(.x[.x != 0], na.rm = T)
          return(out)
        })
        out$trades <- data.frame(rem = rep(0, a %>% purrr::keep(~ length(.) == 1) %>% length))
