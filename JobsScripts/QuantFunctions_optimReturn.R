@@ -17,10 +17,10 @@
 #' }
 
 # For debugging:
-# list(.dat = Positions_ts[[1]], percent = .05, returns.clm = "tslp_0.18_rv", tslindex.clm = NULL, .opts = list(bs.v = F, with.gains = F, max.gain = F)) %>% list2env(envir = .GlobalEnv)
-# test <- optimReturn(.dat = Positions_ts[[1]], returns.clm = "tslp_0.18_rv", percent = .05, .opts = list(bs.v = T, with.gains = T, max.gain = T))
+#list(.dat = Positions_ts_rv$AMD, percent = .1, returns.clm = "tslret_px0.5_day7_rv", tslindex.clm = NULL, .opts = list(bs.v = T, with.gains = F, max.gain = T)) %>% list2env(envir = .GlobalEnv)
+test <- optimReturn(.dat = Positions_ts_rv$AMD, returns.clm = "tslret_px0.5_day7_rv", percent = .1, .opts = list(bs.v = T, with.gains = T, max.gain = T))
  #filter_all(.vars_predicate = dplyr::all_vars({. != 0})) %>% View
-optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm = NULL, .opts = list(bs.v = F, with.gains = F, max.gain = F), debug = F) {
+optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm = NULL, .opts = list(bs.v = F, with.gains = F, max.gain = F), .debug = F) {
   # Set default values to avoid errors on if statements
   if (is.null(.opts$bs.v)) .opts$bs.v <- F 
   if (is.null(.opts$with.gains)) .opts$with.gains <- F 
@@ -44,26 +44,25 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
     # add the date/time column
     cl_nm <- c(time = stringr::str_extract(colnames(.dat), stringr::regex("^time$|^date$", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1], cl_nm)
   }
-  out.res <- purrr::map(1:20, pf = sys.frame(sys.nframe()), .opts = .opts, function(.x, pf, .opts){
+  out.res <- purrr::map(1:20, .pf = sys.frame(sys.nframe()), .opts = .opts, function(.x, .pf, .opts){
     # Compute the first transaction
-    i <- which(pf$lgl.v)[.x] # The index of the first buy
-    if (!HDA::go("i")) return(NULL)
-    sell_dt <- pf$v.ind[i] # Get the date the TSL is sold
+    i <- which(.pf$lgl.v)[.x] # The index of the first buy
+    sell_dt <- .pf$v.ind[i] # Get the date the TSL is sold
     
     # If the order is just open and doesn't sell
     if (is.na(sell_dt)) {
       if (.opts$bs.v) {
-        bs.v <- rep.int(0, length(pf$lgl.v))
+        bs.v <- rep.int(0, length(.pf$lgl.v))
         bs.v[i] <- 1
       }
       # If the gains for each buy point are requested
       if (.opts$with.gains) {
-        with.gains <- rep.int(0, length(pf$lgl.v))
+        with.gains <- rep.int(0, length(.pf$lgl.v))
         with.gains[i] <- NA_complex_
       }
       # if the range for each buy-sell date range are requested
       if (.opts$max.gain) {
-        max.gain <- rep.int(0, length(pf$lgl.v))
+        max.gain <- rep.int(0, length(.pf$lgl.v))
         max.gain[i] <- NA_complex_
       }
       out <- list()
@@ -75,38 +74,38 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
       out$returns <- c(Returns = 0, Cum.Returns = 0, shares = 1)
       return(out)
     }
-    i_sell <- which(pf$v[, pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
+    i_sell <- which(.pf$v[, .pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
     # Start with initial parameters
     total.returns <- 0  #The running investment & initial
-    total.value <- init.inv <- as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T]) # the amt of initial investment
+    total.value <- init.inv <- as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T]) # the amt of initial investment
     shares <- 1 # The number of shares
     # If a buy sell factor is requested
     if (.opts$bs.v) {
-      bs.v <- rep.int(0, length(pf$lgl.v))
+      bs.v <- rep.int(0, length(.pf$lgl.v))
       bs.v[i] <- 1
       bs.v[i_sell] <- -1 # add sell to out.vector
     }
     # If the gains for each buy point are requested
     if (.opts$with.gains) {
-      with.gains <- rep.int(0, length(pf$lgl.v))
-      with.gains[i] <- pf$v[i, returns.clm, drop = T]
+      with.gains <- rep.int(0, length(.pf$lgl.v))
+      with.gains[i] <- .pf$v[i, returns.clm, drop = T]
     }
     # if the range for each buy-sell date range are requested
     if (.opts$max.gain) {
-      max.gain <- rep.int(0, length(pf$lgl.v))
-      max.gain[i] <- (max(pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - pf$.dat[i, cl_nm[c("close")], drop = T]) / pf$.dat[i, cl_nm[c("close")], drop = T]
+      max.gain <- rep.int(0, length(.pf$lgl.v))
+      max.gain[i] <- (max(.pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - .pf$.dat[i, cl_nm[c("close")], drop = T]) / .pf$.dat[i, cl_nm[c("close")], drop = T]
     }
     # Calculate running values
-    total.value <- as.numeric(pf$.dat[i_sell, pf$cl_nm["close"], drop = T]) * shares # as total position value
-    rem <- total.value %% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T])
-    total.returns <- (as.numeric(pf$.dat[i_sell, pf$cl_nm["close"], drop = T]) - as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T])) / init.inv + total.returns # total returns as numeric
+    total.value <- as.numeric(.pf$.dat[i_sell, .pf$cl_nm["close"], drop = T]) * shares # as total position value
+    rem <- total.value %% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])
+    total.returns <- (as.numeric(.pf$.dat[i_sell, .pf$cl_nm["close"], drop = T]) - as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])) / init.inv + total.returns # total returns as numeric
     
     # While loop?
     i <- i_sell + 1
-    while (i <= length(pf$lgl.v)) {
-      if (pf$lgl.v[i]) { # if the immediate next value is a positive gain
-        sell_dt <- pf$v.ind[i] # Get the date the TSL is sold
-        i_sell <- which(pf$v[, pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
+    while (i <= length(.pf$lgl.v)) {
+      if (.pf$lgl.v[i]) { # if the immediate next value is a positive gain
+        sell_dt <- .pf$v.ind[i] # Get the date the TSL is sold
+        i_sell <- which(.pf$v[, .pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
         #if(!HDA::go(i_sell)) browser()
         # If the order is just open and doesn't sell
         if (is.na(sell_dt)) {
@@ -135,26 +134,26 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
           bs.v[i_sell] <- -1 # add sell to out.vector
         }
         if (.opts$with.gains) { # tracking the gains
-          with.gains[i] <- pf$v[i, returns.clm, drop = T] # add the returns
+          with.gains[i] <- .pf$v[i, returns.clm, drop = T] # add the returns
         }
         if (.opts$max.gain) {
-          if ({!HDA::go("i") | !HDA::go("i_sell")} & pf$debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
-          max.gain[i] <- (max(pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - pf$.dat[i, cl_nm[c("close")], drop = T]) / pf$.dat[i, cl_nm[c("close")], drop = T]
+          if ({!HDA::go("i") | !HDA::go("i_sell")} & .pf$.debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
+          max.gain[i] <- (max(.pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - .pf$.dat[i, cl_nm[c("close")], drop = T]) / .pf$.dat[i, cl_nm[c("close")], drop = T]
         }
-        if (total.value %/% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
-        shares <- {total.value %/% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T])} #Update shares
-        rem <- total.value %% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T]) # calculate the remainder left when purchasing additional shares
+        if (total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
+        shares <- {total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])} #Update shares
+        rem <- total.value %% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T]) # calculate the remainder left when purchasing additional shares
         # Calculate running values
-        total.value <- as.numeric(pf$.dat[i_sell, pf$cl_nm["close"], drop = T]) * shares + rem # as total position value
+        total.value <- as.numeric(.pf$.dat[i_sell, .pf$cl_nm["close"], drop = T]) * shares + rem # as total position value
         
-        total.returns <- (as.numeric(pf$.dat[i_sell, pf$cl_nm["close"], drop = T]) - as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T])) / init.inv + total.returns # total returns as numeric
+        total.returns <- (as.numeric(.pf$.dat[i_sell, .pf$cl_nm["close"], drop = T]) - as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])) / init.inv + total.returns # total returns as numeric
         
       } else { # if the immediate next value is a loss
         # Get the index of beginning of the next section of positive gains
-        i <- try(pf$rle.df %>% dplyr::filter(values == T & start > i) %>% dplyr::select(start) %>% .[1,,drop = T])
+        i <- try(.pf$rle.df %>% dplyr::filter(values == T & start > i) %>% dplyr::select(start) %>% .[1,,drop = T])
         if (!HDA::go("i")) break
-        sell_dt <- pf$v.ind[i] # Get the date the TSL is sold
-        i_sell <- which(pf$v[, pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
+        sell_dt <- .pf$v.ind[i] # Get the date the TSL is sold
+        i_sell <- which(.pf$v[, .pf$cl_nm["time"], drop = T] == sell_dt) # Get the index of the day it's sold
         #if(!HDA::go(i_sell)) browser()
         # If the order is just open and doesn't sell
         if (is.na(sell_dt)) {
@@ -183,19 +182,19 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
           bs.v[i_sell] <- -1 # add sell to out.vector
         }
         if (.opts$with.gains) {
-          with.gains[i] <- pf$v[i, returns.clm, drop = T]
+          with.gains[i] <- .pf$v[i, returns.clm, drop = T]
         }
         if (.opts$max.gain) {
-          if ({!HDA::go("i") | !HDA::go("i_sell")} & pf$debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
-          max.gain[i] <- (max(pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - pf$.dat[i, cl_nm[c("close")], drop = T]) / pf$.dat[i, cl_nm[c("close")], drop = T]
+          if ({!HDA::go("i") | !HDA::go("i_sell")} & .pf$.debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
+          max.gain[i] <- (max(.pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - .pf$.dat[i, cl_nm[c("close")], drop = T]) / .pf$.dat[i, cl_nm[c("close")], drop = T]
         }
-        if (total.value %/% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
-        shares <- {total.value %/% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T])} #Update shares
-        rem <- total.value %% as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T]) # calculate the remainder left when purchasing additional shares
+        if (total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
+        shares <- {total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])} #Update shares
+        rem <- total.value %% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T]) # calculate the remainder left when purchasing additional shares
         # Calculate running values
-        total.value <- as.numeric(pf$.dat[i_sell, pf$cl_nm["close"], drop = T]) * shares + rem # as total position value
+        total.value <- as.numeric(.pf$.dat[i_sell, .pf$cl_nm["close"], drop = T]) * shares + rem # as total position value
         
-        total.returns <- (as.numeric(pf$.dat[i_sell, pf$cl_nm["close"], drop = T]) - as.numeric(pf$.dat[i, pf$cl_nm["close"], drop = T])) / init.inv + total.returns # total returns as numeric
+        total.returns <- (as.numeric(.pf$.dat[i_sell, .pf$cl_nm["close"], drop = T]) - as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])) / init.inv + total.returns # total returns as numeric
       }
     i <- i_sell + 1
     }
@@ -208,7 +207,8 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
       out$returns <- c(Returns = total.returns, Cum.Returns = (total.value - init.inv) / init.inv, shares = shares)
     
   return(out)    
-  }) %>% purrr::compact()
+  })
+  out.res <- purrr::compact(out.res)
   # Create final aggregate data structure
   out <- list()
   if (.opts$bs.v | .opts$with.gains | .opts$max.gain) {
