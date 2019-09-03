@@ -160,6 +160,9 @@ params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NUL
 # For Debugging:
 #rm(list = c(".dat", "last_bar", "local_fn", "date_history", "td_nm", "nms", ".cal", "cal", "lgl", "from_weeks", "new_data"))
 params$getPositions_new <- function(Positions_v, params){
+  .bgJob <- any(stringr::str_detect(deparse(sys.calls()), "sourceEnv"))
+  if (.bgJob) message(paste0("Running getPositions_new as Background Task"))
+   
 dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
   # Get the Historical Data filename from the HD
   local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.sym,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
@@ -187,7 +190,6 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
     nms <- c(td_nm, "open","high","low", "close", "volume")
     nms <- rlang::syms(nms)
     .dat %<>% dplyr::select(!!! nms)
-    
   } else {
     # If no data, get 241 data points previous
     from_weeks <- 241/5 + 2 
@@ -200,7 +202,7 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
   }
   .cal <- AlpacaforR::get_calendar(from = lubridate::today() - lubridate::weeks(2), to = lubridate::today() + lubridate::weeks(2))
   .cal <- purrr::pmap(.cal, function(date, open, close){
-    lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EST"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EST"))
+    lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EDT"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EDT"))
   })
   lgl <- vector()
   # If it is NOT during market hours
@@ -214,12 +216,17 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
     attr(.dat, "Sym") <- .sym
     return(.dat)
   }
-  # Retrieve the updated data
-  if (debug){
-    a <- readline(paste0("Retrieve data for ",.sym,"?"))
-    if (a == "n") stop("Quitting.") else if (a == "s") return(.dat)
+  
+  if (HDA::go(".retrieveAll", env = .GlobalEnv)) .retrieveAll <- get0(".retrieveAll", envir = .GlobalEnv) else .retrieveAll <- F
+  message(paste0("Background job: ", .bgJob, " Retrieve all?: ", .retrieveAll))
+  if (!.bgJob & !.retrieveAll){
+    a <- readline(paste0("1. Retrieve data for ",.sym,"? \n 2. Skip ", .sym,"\n 3. Retrieve data for all? \n 4. Skip all"))
+    if (a == 4) stop("Quitting.") else if (a == 2) return(.dat) else if (a == 1) message(paste0("Retrieving data for ",.sym)) else if (a == 3) {
+      .retrieveAll <<- T
+      }
   }
-  message(paste0("Retrieving data for ",.sym))
+  if (.retrieveAll) message(paste0("Retrieving data for ",.sym))
+  # Retrieve the updated data
   new_bars <- AlpacaforR::get_bars(ticker = .sym, from = last_bar, to = lubridate::today())[[1]]
   if (HDA::go(.dat)) { # if the data exists on the HD
     # Combine it with the new data
@@ -237,6 +244,7 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
   attr(new_data, "Sym") <- .sym
   return(new_data)
 })
+names(dat) <- Positions_v
 return(dat)
 }
 
