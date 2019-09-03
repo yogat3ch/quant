@@ -1,5 +1,3 @@
-#TODO Rewrite to accommodate new AddRVStoNewData with changes to best_tsl 2019-07-22 1840
-#DONE Rewrote, now need to debug.
 message(paste0("Begin ",basename(stringr::str_extract(commandArgs(trailingOnly = FALSE), "(?<=script \\= \\')[A-Za-z0-9\\/\\:\\.]+")) %>% .[!is.na(.)], " at ", lubridate::now()," From location: ",getwd()))
 HDA::startPkgs(c("magrittr"))
 source("~/R/Quant/JobsScripts/QuantFunctions_optimReturn.R")
@@ -24,35 +22,35 @@ dat <- purrr::pmap(list = list(.fn = fns, .s = names(dat), .b_tsl = best_tsl, .d
   rm(list = ob_chr)
   # For Debugging:
   #list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
-  preds <- purrr::pmap(list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct), pf = parent.frame(), function(.tsl, .pct, pf) {
+  preds <- purrr::pmap(list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct), .pf = parent.frame(), function(.tsl, .pct, .pf) {
     # Preprocess data
     .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ."))
-    .td_nm <- pf$params$getTimeIndex(pf$.dat)
+    .td_nm <- .pf$params$getTimeIndex(.pf$.dat)
     # ----------------------- Fri Jul 26 14:19:16 2019 ------------------------#
     # PreProcessing Data
     # 1. Make model frame
-    .out <- model.frame(.frm, pf$.dat)
+    .out <- model.frame(.frm, .pf$.dat)
     # 2. remove any columns that may be matrices
     .out <- dplyr::mutate_if(.out, .predicate = is.matrix, ~ as.vector(.))
     # 3. Create dummyVars from factors
     library(caret)
     .out <- caret::dummyVars(.frm, data = .out) %>% predict(., newdata = .out)
     HDA::unloadPkgs("caret")
-    .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ", paste(pf$ob[[.tsl]][[1]][["coefnames"]], collapse = " + ")))
-    .out <- cbind.data.frame(pf$.dat[, .tsl], .out)
+    .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ", paste(.pf$ob[[.tsl]][[1]][["coefnames"]], collapse = " + ")))
+    .out <- cbind.data.frame(.pf$.dat[, .tsl], .out)
     .out <- model.frame(.frm, as.data.frame(.out))
     if (xts::is.xts(.out)) {
       # Add Prediction column
-      pred <- xts::cbind.xts(rowMeans(predict(pf$ob[[.tsl]], newdata = .out)), pf$.dat[, c(.td_nm,"open","high","low","close", paste0(.tsl, "_ind"))], .out)
+      pred <- xts::cbind.xts(rowMeans(predict(.pf$ob[[.tsl]], newdata = .out)), .pf$.dat[, c(.td_nm,"open","high","low","close", paste0(.tsl, "_ind"))], .out)
       colnames(pred)[1] <- paste0(.tsl, "_pred")
     } else {
       # Add Prediction column
-      pred <- cbind.data.frame(rowMeans(predict(pf$ob[[.tsl]], newdata = .out)), pf$.dat[, c(.td_nm,"open","high","low","close", paste0(.tsl, "_ind"))], .out)
+      pred <- cbind.data.frame(rowMeans(predict(.pf$ob[[.tsl]], newdata = .out)), .pf$.dat[, c(.td_nm,"open","high","low","close", paste0(.tsl, "_ind"))], .out)
       colnames(pred)[1] <- paste0(.tsl, "_pred")
       
     }
     # Create returns matrix
-    ret <- pf$optimReturn(pred, percent = .pct, returns.clm = paste0(.tsl, "_pred"), tslindex.clm = paste0(.tsl, "_ind"), .opts = list(bs.v = T))
+    ret <- .pf$optimReturn(pred, percent = .pct, returns.clm = paste0(.tsl, "_pred"), tslindex.clm = paste0(.tsl, "_ind"), .opts = list(bs.v = T))
     .out <- cbind.data.frame(ret$.opts[, which.max(ret$returns[,"Cum.Returns"])], pred)
     colnames(.out)[1] <- paste0(.tsl, "_action")
     attr(.out, "Returns") <- ret$returns
