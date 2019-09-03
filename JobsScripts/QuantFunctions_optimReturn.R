@@ -18,7 +18,7 @@
 
 # For debugging:
 #list(.dat = Positions_ts_rv$AMD, percent = .1, returns.clm = "tslret_px0.5_day7_rv", tslindex.clm = NULL, .opts = list(bs.v = T, with.gains = F, max.gain = T)) %>% list2env(envir = .GlobalEnv)
-test <- optimReturn(.dat = Positions_ts_rv$AMD, returns.clm = "tslret_px0.5_day7_rv", percent = .1, .opts = list(bs.v = T, with.gains = T, max.gain = T))
+#test <- optimReturn(.dat = Positions_ts_rv$AMD, returns.clm = "tslret_px0.5_day7_rv", percent = .1, .opts = list(bs.v = T, with.gains = T, max.gain = T))
  #filter_all(.vars_predicate = dplyr::all_vars({. != 0})) %>% View
 optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm = NULL, .opts = list(bs.v = F, with.gains = F, max.gain = F), .debug = F) {
   # Set default values to avoid errors on if statements
@@ -138,7 +138,7 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
         }
         if (.opts$max.gain) {
           if ({!HDA::go("i") | !HDA::go("i_sell")} & .pf$.debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
-          max.gain[i] <- (max(.pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - .pf$.dat[i, cl_nm[c("close")], drop = T]) / .pf$.dat[i, cl_nm[c("close")], drop = T]
+          max.gain[i] <- (max(.pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist, na.rm = T) - .pf$.dat[i, cl_nm[c("close")], drop = T]) / .pf$.dat[i, cl_nm[c("close")], drop = T]
         }
         if (total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
         shares <- {total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])} #Update shares
@@ -186,7 +186,7 @@ optimReturn <- function(.dat, percent = 0.05, returns.clm = NULL, tslindex.clm =
         }
         if (.opts$max.gain) {
           if ({!HDA::go("i") | !HDA::go("i_sell")} & .pf$.debug) message(paste0("i:",i,"i_sell:",i_sell,"i:i_sell", paste0(i:i_sell, collapse = "_")))
-          max.gain[i] <- (max(.pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist) - .pf$.dat[i, cl_nm[c("close")], drop = T]) / .pf$.dat[i, cl_nm[c("close")], drop = T]
+          max.gain[i] <- (max(.pf$.dat[i:i_sell, cl_nm[c("high")], drop = T] %>% unlist, na.rm = T) - .pf$.dat[i, cl_nm[c("close")], drop = T]) / .pf$.dat[i, cl_nm[c("close")], drop = T]
         }
         if (total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T]) < 1 ) break # Break if the value drops below being able to buy a share
         shares <- {total.value %/% as.numeric(.pf$.dat[i, .pf$cl_nm["close"], drop = T])} #Update shares
