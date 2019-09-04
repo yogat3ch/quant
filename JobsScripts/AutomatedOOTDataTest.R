@@ -8,33 +8,16 @@ try({source("~/R/Quant/JobsScripts/parameters.R")}) # principal and TSLvars
 Personal <- googlesheets::gs_read(params$gs, ws = "Personal")
 Positions_v <- Personal$Symbol[- c(1,2)]
 names(Positions_v) <- Positions_v
-load(file = params$paths$Positions_tsl) # Positions tsl for optimal TSL
-#TODO 2019-08-18 0902 Rework for new format of Positions_tsl 
-#TODO Load PositionData and form into Position_ts save Positions_ts to dat
+load(file = params$paths$best_tsl) # Positions tsl for optimal TSL
 # ----------------------- Mon Aug 05 16:47:38 2019 ------------------------#
 # Update local data
+.retrieveAll <- T
 dat <- params$getPositions_new(Positions_v, params)
 # End update local data
-#----------------------- Mon Aug 05 16:48:04 2019 ------------------------#
-best_tsl <- purrr::map2(Positions_tsl[names(dat)], .y = dat, tslv = params$TSLvars, function(.x, .y, tslv){
-  .x %<>% dplyr::mutate_at(dplyr::vars(tsl),~ stringr::str_replace(.,"\\_rv$",""))
-  # Get the TSL with the most cumulative returns and with the most possible limit gain for a given period
-  out <- list(tsl_types = rbind.data.frame(dplyr::arrange(.x, dplyr::desc(Cum.Returns)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")],
-                                           dplyr::arrange(.x, dplyr::desc(`100%max`)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")]))
-  # Are there tsl not already represented in the data?
-  existing_tsl <- {out$tsl_types$tsl[out$tsl_types$tsl %in% {names(.y)[stringr::str_which(names(.y),"rv$")] %>% stringr::str_replace(.,"\\_rv$","")}] %>% length} > 0
-  # If there are and add is true (defaults to true) then add only those that don't already exist
-  if (existing_tsl){
-    # filter the table for those tsl not already in the data
-    out$tsl_types %<>% dplyr::filter(!tsl == existing_tsl) }
-  # Return the TSLvars parameters for each of those TSL types
-  out$tslv <- tslv[out$tsl_types[["tsl"]]]
-  return(out)
-})
 # ----------------------- Mon Jun 10 13:57:35 2019 ------------------------#
 # Add Independent variables
 source("~/R/Quant/JobsScripts/AddIVstoData.R", local = T)
-# Add Dependent variables
+# Add Dependent Variables
 source("~/R/Quant/JobsScripts/AddRVstoNewData.R", local = T)
 # ----------------------- Mon Jun 10 15:37:01 2019 ------------------------#
 # Apply Models to the new data
