@@ -10,9 +10,10 @@ googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 params$wind  <-  c(weeks = 5, moonphase = 5 * 2, mooncycle = 5 * 4, quarters = 5 * 12)
 
 # Paths to the most recent data saves
-params$paths <- list(Positions_tsl = "~/R/Quant/Positions_tsl2019-07-18.Rdata", 
-                     Positions_ts = "~/R/Quant/Positions_ts_rv_iv2015-07-27_2019-07-16.Rdata",
-                     Positions_new = "~/R/Quant/Positions_new.Rdata")
+params$paths <- list(Positions_tsl = "~/R/Quant/Positions_tsl2019-09-02.Rdata", 
+                     Positions_ts_rv_iv = "~/R/Quant/Positions_ts_rv_iv2015-07-27_2019-07-16.Rdata",
+                     Positions_new = "~/R/Quant/Positions_new.Rdata",
+                     best_tsl = "~/R/Quant/best_tsl.Rdata")
 
 # Read the columns from the Orders sheet in their appropriate classes
 params$Orders_cols <- c(Platform= 'c',id= 'c',client_order_id= 'c',created_at= 'T' ,updated_at= 'T',submitted_at= 'T',filled_at= 'T',expired_at= 'T',canceled_at= 'T' ,failed_at= 'T',asset_id= 'c',symbol= 'c',asset_class= 'c',qty= 'd',filled_qty='d' ,filled_avg_price= 'd',order_type= 'c',type= 'c',side= 'c',time_in_force= 'c',limit_price= 'd',stop_price= 'd',status= 'c',extended_hours = 'l', CB= 'd',GL= 'd',TSL= 'c',live= 'l',SID ='c')
@@ -123,7 +124,7 @@ params$AlpacatoR_bars_mutate <- function(l) {
 }
 
 # Function for loading data quickly
-params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NULL) {
+params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NULL, where = NULL) {
   if (is.null(reg) & is.null(object)) {
     reg <- ".Rdata$"
     files <- list.files(recursive = T)[stringr::str_which(list.files(recursive = T), reg)]
@@ -152,7 +153,7 @@ params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NUL
     fn <- append(fn, paste0(name,lubridate::today(),".Rdata"))
     print(fn)
     i <- readline(prompt = "Choose the file name:")
-    save(list = name, file = fn[as.numeric(i)])
+    save(list = name, file = paste0(where,fn[as.numeric(i)]), compress = "xz")
   }
 }
 
@@ -202,13 +203,13 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
   }
   .cal <- AlpacaforR::get_calendar(from = lubridate::today() - lubridate::weeks(2), to = lubridate::today() + lubridate::weeks(2))
   .cal <- purrr::pmap(.cal, function(date, open, close){
-    lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = "EDT"), end = lubridate::ymd_hm(paste0(date, " ", close), tz = "EDT"))
-  })
+    lubridate::interval(start = lubridate::ymd_hm(paste0(date, " ", open), tz = Sys.timezone()), end = lubridate::ymd_hm(paste0(date, " ", close), tz = Sys.timezone()))
+    })
   lgl <- vector()
   # If it is NOT during market hours
   lgl[1]<- {!purrr::map_lgl(.cal, now = lubridate::now(), function(.x, now) lubridate::`%within%`(now,.x)) %>% any}
   # AND the last_bar is equal to the last market day 
-  lgl[2] <- {.cal[[max(which(purrr::map_lgl(.cal, ~ lubridate::int_end(.x) < lubridate::now())))]] %>% lubridate::int_end() %>% lubridate::as_date() == last_bar}
+  lgl[2] <- {.cal[[max(which(purrr::map_lgl(.cal, ~ lubridate::int_end(.x) < lubridate::now() | lubridate::`%within%`(lubridate::now(), .x))))]] %>% lubridate::int_end() %>% lubridate::as_date() == last_bar}
   # AND there is data for .dat
   lgl[3] <- HDA::go(.dat)
   message(lgl)
