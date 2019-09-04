@@ -15,13 +15,16 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
   tick <- attr(.dat, "Sym") %>% unlist # Get the symbol of the data and store it
   message(paste0("Training: ",tick," Now: ",lubridate::now()))
   if (zoo::is.zoo(.dat)) .dat <-  zoo::fortify.zoo(.dat) # If still xts, convert to df
-  if (!is.null(.b_tsl)) train_rvs <- c(.b_tsl[["tsl_types"]][["tsl"]], train_rvs) # If best_tsl is included then add that RV to the ones to be trained
+  if (!is.null(.b_tsl)) train_rvs <- c(.b_tsl[["tsl_types"]][["tsl"]], train_rvs) %>% unique # If best_tsl is included then add that RV to the ones to be trained
   train_rvs <- paste0(train_rvs,"_rv")
     try({load(file = paste0("~/R/Quant/MdlBkp/",tick, "_cl.Rdata"))}) #Try to load previous models
   ob <- get0(paste0(tick, "_cl"), mode = "list") # If it loads, save it as ob
-  # Remove models from object
-  if(!is.null(ob) & sum(train_rvs %in% names(ob)) > 0) {
+  # If .replace is TRUE Remove models from object
+  if(!is.null(ob) & sum(train_rvs %in% names(ob)) > 0 & .replace) {
     ob <- ob[!names(ob) %in% train_rvs]
+  } else if (!is.null(ob) & sum(train_rvs %in% names(ob)) > 0 & !.replace) {
+    # If false remove already trained rvs from train_rvs
+    train_rvs <- train_rvs[!names(train_rvs) %in% names(ob)]
     }
   
   message(paste0(tick," RVs: ", paste(train_rvs, collapse = ", ")))
@@ -38,16 +41,16 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
     } # If not enough data say so and return
   rm(list = c(paste0(tick,"_cl")))
   #Initiate packages
-  out <- purrr::map(train_rvs, pf = sys.frame(sys.nframe()), function(nm, pf){
-      td_nm <- stringr::str_extract(names(pf$.dat), "^time$|^date$") %>% purrr::discard(is.na)
-      rvs <- stringr::str_extract_all(names(pf$.dat), ".*rv$|.*ind$|.*type$") %>% purrr::compact() %>% unlist %>% .[{. != nm}]
-      if (is.character(pf$.dat[[nm]]) | is.factor(pf$.dat[[nm]]) ) {metric <- "Accuracy"} else {metric <- "MAE"}
+  out <- purrr::map(train_rvs, .pf = sys.frame(sys.nframe()), function(nm, .pf){
+      td_nm <- stringr::str_extract(names(.pf$.dat), "^time$|^date$") %>% purrr::discard(is.na)
+      rvs <- stringr::str_extract_all(names(.pf$.dat), ".*rv$|.*ind$|.*type$") %>% purrr::compact() %>% unlist %>% .[{. != nm}]
+      if (is.character(.pf$.dat[[nm]]) | is.factor(.pf$.dat[[nm]]) ) {metric <- "Accuracy"} else {metric <- "MAE"}
       
       frm <- formula(paste(paste0("`",nm,"`"), "~ ."))
       # ----------------------- Fri Jul 26 14:19:16 2019 ------------------------#
       # PreProcessing Data
       # 1. remove extraneous columns
-      out <- pf$.dat[ ,!names(pf$.dat) %in% c(rvs,td_nm)]
+      out <- .pf$.dat[ ,!names(.pf$.dat) %in% c(rvs,td_nm)]
       # 2. Make model frame
       out <- model.frame(frm, out)
       # 3. remove any columns that may be matrices
@@ -61,7 +64,7 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
       #6.  Remove Variables with near Zero variance
       out <- out[ , - caret::nearZeroVar(out)]
       
-      out <- cbind(pf$.dat[, nm, drop = T], out)
+      out <- cbind(.pf$.dat[, nm, drop = T], out)
       colnames(out)[1] <- nm
       # tunelist <- sapply(methodList, simplify = F, USE.NAMES = T, tuneLength = 5, FUN = function(m, tuneLength = NULL, tuneGrids = NULL){
       #   if (is.numeric(tuneLength)){
@@ -72,11 +75,11 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
       #   return(out)
       # })
       gc()
-      message(paste0(pf$tick, ": ", nm, " Time:", lubridate::now()))
+      message(paste0(.pf$tick, ": ", nm, " Time:", lubridate::now()))
       cl <- parallel:::makePSOCKcluster(6, outfile = "~/R/Quant/dopar.log")
       doParallel::registerDoParallel(cl)
       train.time <- system.time({
-        tr.index <- caret::createDataPartition(pf$.dat[, nm, drop = T], times = 5, p = .75)
+        tr.index <- caret::createDataPartition(.pf$.dat[, nm, drop = T], times = 5, p = .75)
         data.train <- caret::trainControl(method = "repeatedcv",
                                           search = "grid", 
                                           returnData = F,
@@ -89,12 +92,12 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
                                                  data = out,
                                                  trControl = data.train,
                                                  metric = metric,
-                                                 tuneList = pf$.mS,
+                                                 tuneList = .pf$.mS,
                                                  continue_on_fail = T)
       })
       parallel::stopCluster(cl)
       
-      message(paste0(pf$tick,": ", nm," / ", names(train.time)[3],": ",lubridate::as.duration(train.time[3])," / Time: ",lubridate::now()))
+      message(paste0(.pf$tick,": ", nm," / ", names(train.time)[3],": ",lubridate::as.duration(train.time[3])," / Time: ",lubridate::now()))
       return(caretlistmod)
     })
     
