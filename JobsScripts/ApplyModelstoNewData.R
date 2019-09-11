@@ -7,10 +7,10 @@ if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
   }
 if (!exists("OOTbegin", mode = "numeric")) OOTbegin <- NULL
 # For debugging:
-list(.sym = names(dat), .b_tsl = best_tsl, .dat = dat) %>% purrr::map(2) %>% append(list(OOTbegin = OOTbegin)) %>% list2env(envir = .GlobalEnv)
-.pf <- parent.frame()
-#rm(list = c(".fn", ".b_tsl",".dat", "ob_chr"))
-dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl), OOTbegin = OOTbegin, function(.sym, .b_tsl, .dat, OOTbegin){
+# list(.sym = names(dat), .b_tsl = best_tsl[names(dat)], .dat = dat) %>% purrr::map(1) %>% append(list(OOTbegin = OOTbegin)) %>% list2env(envir = .GlobalEnv)
+# .pf <- parent.frame()
+# rm(list = c(".fn", ".b_tsl",".dat", "ob_chr"))
+dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl[names(dat)]), OOTbegin = OOTbegin, function(.sym, .b_tsl, .dat, OOTbegin){
   # get the path to the corresponding object
   .fn <- list.files(path = "~/R/Quant/MdlBkp", pattern = paste0(.sym,"_cl.Rdata"), full.names = T)
   # Get the name of the object
@@ -21,17 +21,25 @@ dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl), OOTbe
   
   .b_tsl$tsl_types %<>% dplyr::mutate_at(dplyr::vars(tsl),~ paste0(., "_rv"))
   ob <- get0(ob_chr)
+  if (!HDA::go(ob)) {
+    message(paste0(.sym, ": no model trained. Returning data."))
+    return(.dat)
+  }  
   rm(list = ob_chr)
-  # For Debugging:
-  #list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
-  .preds <- purrr::pmap(list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct), .pf = parent.frame(), function(.tsl, .pct, .pf) {
+  .b_tsl$tsl_types <- unique(.b_tsl$tsl_types)
+  # #For Debugging:
+  # list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
+  HDA::startPkgs("caretEnsemble")
+  .preds <- purrr::pmap(list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct), .pf = sys.frame(sys.nframe()), function(.tsl, .pct, .pf) {
+    message(paste0(ls(envir = .pf, all.names = T), collapse = ", "))
     # Preprocess data
     .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ."))
     .td_nm <- params$getTimeIndex(.pf$.dat)
+    message(paste0("Is ",.tsl, " in the object? ", .tsl %in% names(.pf$ob)))
     # ----------------------- Fri Jul 26 14:19:16 2019 ------------------------#
     # PreProcessing Data
     # 1. Make model frame
-    .out <- model.frame(.frm, data = .pf$.dat)
+    .out <- model.frame(.frm, data = .pf$.dat, na.action = "na.pass")
     # 2. remove any columns that may be matrices
     .out <- dplyr::mutate_if(.out, .predicate = is.matrix, ~ as.vector(.))
     # 3. Create dummyVars from factors
@@ -44,18 +52,20 @@ dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl), OOTbe
     if (xts::is.xts(.pf$.dat)) {
       # Add Prediction column
       .out <- data.frame(v = rowMeans(predict(.pf$ob[[.tsl]], newdata = .out)))
-      colnames(pred)[1] <- paste0(.tsl, "_pred")
+      colnames(.out)[1] <- paste0(.tsl, "_pred")
     } else {
       # Add Prediction column
       .out <- data.frame(v = rowMeans(predict(.pf$ob[[.tsl]], newdata = .out)))
-      colnames(pred)[1] <- paste0(.tsl, "_pred")
+      colnames(.out)[1] <- paste0(.tsl, "_pred")
       
     }
     return(.out)
 })
+  HDA::unloadPkgs("caretEnsemble")
   #Name the output list
   names(.preds) <- .b_tsl$tsl_types$tsl
-  .out <- cbind.data.frame(do.call("cbind.data.frame", preds), .dat) %>% dplyr::select(!!td_nm, dplyr::everything())
+  .td_nm <- params$getTimeIndex(.dat)
+  .out <- cbind.data.frame(do.call("cbind.data.frame", .preds), .dat) %>% dplyr::select(!!.td_nm, dplyr::everything())
   attr(.out, "Sym") <- .sym
   rm(ob)
   return(.out)
