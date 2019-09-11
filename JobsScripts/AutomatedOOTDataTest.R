@@ -25,12 +25,12 @@ Actions <- purrr::map(dat, function(.x){
   names(out) <- xts::last(.x) %>% dplyr::select(dplyr::ends_with("pred")) %>% unlist %>% names
   
   return(out)
-}) %>% purrr::map2(.y = Positions_tsl[names(dat)], function(.x, .y){
-  tsls <- .y[["TSL"]][["rowname"]]
-  pcts <- .y[["TSL"]][["pct"]]
+}) %>% purrr::map2(.y = best_tsl[names(dat)], function(.x, .y){
+  .tsls <- .y[["tsl_types"]][["tsl"]]
+  .pcts <- .y[["tsl_types"]][["pct"]]
   out <- list()
-  for (i in seq_along(tsls)) {
-      out[[i]] <- c(Pred = .x[paste0(tsls[i],"_pred")], Pct = pcts[i])
+  for (i in seq_along(.tsls)) {
+      out[[i]] <- c(Pred = .x[paste0(.tsls[i],"_pred")], Pct = .pcts[i])
      
     
   }
