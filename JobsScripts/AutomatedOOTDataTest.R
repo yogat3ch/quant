@@ -1,11 +1,11 @@
 HDA::startPkgs(c("magrittr","tidyverse","rlang"))
 setwd("~/R/Quant/JobsScripts")
 message(paste0("Begin AutomatedStopLoss sourced from ",basename(stringr::str_extract(commandArgs(trailingOnly = FALSE), "(?<=script\\s\\=\\s\\')[A-Za-z0-9\\/\\:\\.\\_]+") %>% .[!is.na(.)]), " at ", lubridate::now()," From location: ",getwd()))
-params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")# ----------------------- Sun Aug 18 08:53:47 2019 ------------------------#
+gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")# ----------------------- Sun Aug 18 08:53:47 2019 ------------------------#
 # Load Files
 # TODO(could use optimization to only retrieve positions_new once per day)
 try({source("~/R/Quant/JobsScripts/parameters.R")}) # principal and TSLvars
-Personal <- googlesheets::gs_read(params$gs, ws = "Personal")
+Personal <- googlesheets::gs_read(gs, ws = "Personal")
 Positions_v <- Personal$Symbol[- c(1,2)]
 names(Positions_v) <- Positions_v
 load(file = params$paths$best_tsl) # Positions tsl for optimal TSL
@@ -17,8 +17,6 @@ dat <- params$getPositions_new(Positions_v, params)
 # ----------------------- Mon Jun 10 13:57:35 2019 ------------------------#
 # Add Independent variables
 source("~/R/Quant/JobsScripts/AddIVstoData.R", local = T)
-# Add Dependent Variables
-source("~/R/Quant/JobsScripts/AddRVstoNewData.R", local = T)
 # ----------------------- Mon Jun 10 15:37:01 2019 ------------------------#
 # Apply Models to the new data
 source("~/R/Quant/JobsScripts/ApplyModelstoNewData.R", local = T)
