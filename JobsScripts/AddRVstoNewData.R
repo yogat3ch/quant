@@ -21,13 +21,14 @@ run.time <- system.time({
     sym <- attr(x, "Sym")
     if (all(!is.na(quantmod::HLC(x))) ) {
 #TODO Rearrange based on new best_tsl input 2019-07-20 1059
-      rvs <- purrr::imap(this_tsl$tslv, pf = sys.frame(sys.nframe()), function(.x, .y, pf){
-        message(paste0(lubridate::now()," ",pf$sym," - Begin: ",.y))
-        .x$tsl_amt <- pf$tsl_amt
+      this_tsl$tslv <- this_tsl[["tslv"]][!duplicated(names(this_tsl$tslv))]
+      rvs <- purrr::imap(this_tsl$tslv, .pf = sys.frame(sys.nframe()), function(.x, .y, .pf){
+        message(paste0(lubridate::now()," ",.pf$sym," - Begin: ",.y))
+        .x$tsl_amt <- .pf$tsl_amt
         source("~/R/Quant/JobsScripts/QuantFunctions_TSL.R")
-        .args <- list(v = pf$x[, stringr::str_which(names(pf$x), stringr::regex("date|time|open|high|low|close", ignore_case = T))], .args = .x)
+        .args <- list(v = .pf$x[, stringr::str_which(names(.pf$x), stringr::regex("date|time|open|high|low|close", ignore_case = T))], .args = .x)
         out <- eval(rlang::call2("TSL", !!!.args))
-        message(paste0(lubridate::now(), " ",pf$sym," - End: ",.y))
+        message(paste0(lubridate::now(), " ",.pf$sym," - End: ",.y))
         return(out)
         })
       rvs %<>% do.call("cbind", .)
