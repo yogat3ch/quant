@@ -40,20 +40,22 @@ Purchase$orders <- data.frame()
      #----------------------- Mon Jul 15 16:40:59 2019 ------------------------#
     # ----------------------- Fri Jun 28 18:56:36 2019 ------------------------#
     # Make the purchase
-    Purchase$placed <- AlpacaforR::submit_order(Purchase$buy_syms[i], qty = Purchase$buy_shares[i], side = "buy", type = "market", time_in_force = "gtc", live = Purchase$live[i]) %>% AlpacatoR_order_mutate(tsl = Purchase$tsl[i], live = Purchase$live[i], ws = ws, wso = wso)
+    Purchase$placed <- list()
+    Purchase$placed[[i]] <- AlpacaforR::submit_order(Purchase$buy_syms[i], qty = Purchase$buy_shares[i], side = "buy", type = "market", time_in_force = "gtc", live = Purchase$live[i]) %>% params$AlpacatoR_order_mutate(tsl = Purchase$tsl[i], live = Purchase$live[i], ws = ws, wso = wso)
     
   # ----------------------- Tue Jul 02 15:27:43 2019 -----------------------#
   # Update the googlesheet meta-record
-  googlesheets::gs_add_row(params$gs, ws = "Orders", input = Purchase$placed)
+  googlesheets::gs_add_row(params$gs, ws = "Orders", input = Purchase$placed[[i]])
   }  
 # Add any symbols not currently present in the tracking sheets to the sheets.
-purrr::map(c("Hourly","Holdings","(Hi)","(Lo)","(Op)","(Vo)","(cP)"), gs = params$gs, s = Purchase$buy_syms, function(.x, gs, s){
-  symbols <- googlesheets::gs_read(gs, ws = .x, range = googlesheets::cell_rows(1),col_names = F) %>% unlist
-  if (!any(s %in% symbols)) {
-    symbols <- c(symbols,s[!s %in% symbols])
-    googlesheets::gs_edit_cells(gs, ws = .x, input = data.frame(symbols, stringsAsFactors = F) %>% t, byrow = T, col_names = F)
-  }
-})
+# Deprecated - now using Alpaca API to get data
+# purrr::map(c("Hourly","Holdings","(Hi)","(Lo)","(Op)","(Vo)","(cP)"), gs = params$gs, s = Purchase$buy_syms, function(.x, gs, s){
+#   symbols <- googlesheets::gs_read(params$gs, ws = .x, range = googlesheets::cell_rows(1),col_names = F) %>% unlist
+#   if (!any(s %in% symbols)) {
+#     symbols <- c(symbols,s[!s %in% symbols])
+#     googlesheets::gs_edit_cells(gs, ws = .x, input = data.frame(symbols, stringsAsFactors = F) %>% t, byrow = T, col_names = F)
+#   }
+# })
    
     
    
