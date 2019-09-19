@@ -7,9 +7,9 @@ if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
   }
 if (!exists("OOTbegin", mode = "numeric")) OOTbegin <- NULL
 # For debugging:
-# list(.sym = names(dat), .b_tsl = best_tsl[names(dat)], .dat = dat) %>% purrr::map(1) %>% append(list(OOTbegin = OOTbegin)) %>% list2env(envir = .GlobalEnv)
+# list(.sym = names(dat), .b_tsl = best_tsl[names(dat)], .dat = dat) %>% purrr::map(7) %>% append(list(OOTbegin = OOTbegin)) %>% list2env(envir = .GlobalEnv)
 # .pf <- parent.frame()
-# rm(list = c(".fn", ".b_tsl",".dat", "ob_chr"))
+ # rm(list = c(".fn", ".b_tsl",".dat", "ob_chr", ".out", ".frm", ".td_nm"))
 dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl[names(dat)]), OOTbegin = OOTbegin, function(.sym, .b_tsl, .dat, OOTbegin){
   # get the path to the corresponding object
   .fn <- list.files(path = "~/R/Quant/MdlBkp", pattern = paste0(.sym,"_cl.Rdata"), full.names = T)
@@ -17,8 +17,10 @@ dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl[names(d
   ob_chr <- paste0(.sym, "_cl")
   message(paste0("Loading: ", .sym))
   # Load the data
-  try({load(.fn)})
-  
+  st <- system.time({
+    try({load(.fn)})
+  })
+ message(paste0("Loaded ", ob_chr, " in ", lubridate::as.duration(st[[3]])))
   .b_tsl$tsl_types %<>% dplyr::mutate_at(dplyr::vars(tsl),~ paste0(., "_rv"))
   ob <- get0(ob_chr)
   if (!HDA::go(ob)) {
@@ -26,11 +28,11 @@ dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl[names(d
     return(.dat)
   }  
   rm(list = ob_chr)
-  .b_tsl$tsl_types <- unique(.b_tsl$tsl_types)
   # #For Debugging:
-  # list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
+  # list(.tsl = unique(.b_tsl$tsl_types$tsl), .pct = unique(.b_tsl$tsl_types$pct)) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
+  message(paste0("Predicting..."))
   HDA::startPkgs("caretEnsemble")
-  .preds <- purrr::pmap(list(.tsl = .b_tsl$tsl_types$tsl, .pct = .b_tsl$tsl_types$pct), .pf = sys.frame(sys.nframe()), function(.tsl, .pct, .pf) {
+  .preds <- purrr::pmap(list(.tsl = unique(.b_tsl$tsl_types$tsl)), .pf = sys.frame(sys.nframe()), function(.tsl, .pf) {
     message(paste0(ls(envir = .pf, all.names = T), collapse = ", "))
     # Preprocess data
     .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ."))
@@ -63,7 +65,7 @@ dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl[names(d
 })
   HDA::unloadPkgs("caretEnsemble")
   #Name the output list
-  names(.preds) <- .b_tsl$tsl_types$tsl
+  names(.preds) <- unique(.b_tsl$tsl_types$tsl)
   .td_nm <- params$getTimeIndex(.dat)
   .out <- cbind.data.frame(do.call("cbind.data.frame", .preds), .dat) %>% dplyr::select(!!.td_nm, dplyr::everything())
   attr(.out, "Sym") <- .sym
