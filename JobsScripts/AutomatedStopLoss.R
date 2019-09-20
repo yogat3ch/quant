@@ -31,7 +31,7 @@ message(paste0("Begin AutomatedStopLoss sourced from ",basename(stringr::str_ext
 # ----------------------- Wed Jul 10 13:33:51 2019 ------------------------#
 # Loads
 try({load(file = params$paths$Positions_ts)})
-try({load(file = params$paths$Positions_tsl)})
+try({load(file = params$paths$best_tsl)})
 
 
 
@@ -47,9 +47,9 @@ if (nrow(Orders_unfilled) > 0) {
   Orders_filled <- all_orders %>% filter(id %in% Orders_unfilled$id & status == "filled" & side == "buy")
   if (nrow(Orders_filled) > 0) {
     for (i in seq_along(Orders_filled$id)) {
-      
-      merge_by_nms <- names(Orders_filled)[names(Orders_filled) %in% names(Orders_unfilled)][-c(4:9, 14:15, 22)]
-      update_nms <- names(Orders_filled)[names(Orders_filled) %in% names(Orders_unfilled)][c(4:9, 14:15, 22)]
+      # Get the names of the common values to be joined on
+      merge_by_nms <- names(Orders_filled)[purrr::map2_lgl(Orders_filled,{Orders_unfilled[1, - c(names(Orders_unfilled) %in% setdiff(names(Orders_unfilled),names(Orders_filled)) %>% which)] %>% unclass},~ .x == .y) %>% which]
+      update_nms <- names(Orders_filled)[names(Orders_filled) %in% names(Orders_unfilled)][- {purrr::map2_lgl(Orders_filled,{Orders_unfilled[1, - c(names(Orders_unfilled) %in% setdiff(names(Orders_unfilled),names(Orders_filled)) %>% which)] %>% unclass},~ .x == .y) %>% which}]
       filled_sales <- Orders_filled[i,] %>% left_join(Orders_unfilled[i,] %>% select(- update_nms), by = merge_by_nms) %>% select(Platform, everything()) %>% mutate(qty_remain = filled_qty)
       filled_sales[, addtl_cols] <- Orders_unfilled[i,addtl_cols]
       # Replace the row in Google Sheets
