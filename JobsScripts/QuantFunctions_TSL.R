@@ -36,10 +36,13 @@ TSL <- function(v, .args, verbose = F) {
       if (xts::is.xts(v)) .args[[1]]$dtref <- time(v)[i] else .args[[1]]$dtref <- v[i, cl_nm[["time"]], drop = T]
       # if (verbose) message(paste0("dtref: ",.args[[1]]$dtref," next date: ",.args[[1]]$dtref - .args[[1]]$retro))
       # Get the tsl amount
+      #2019-09-20 Because these are recalculated as the TSL moves along the dataset, tslsd & tslret will make it such that during periods of little variance the position is likely to be sold. This is because the tsl is recalculated and subtracted from the peak at each time point as it moves along the dataset.
+      if (i == .x) { # Added to address the above 2019-09-20 
       # if its tslsd
       if (!is.null(.args$tslsd)) tsl <- tsl_amt(.data = v, .args[1])
       # if its tslret 
       if (!is.null(.args$tslret)) tsl <- tsl_amt(.data = v, .args[1])
+      }
       # if its tslp
       if (!is.null(.args$tslp)) tsl <- peak * .args$tslp[[1]]
       #if (verbose) message(paste0("tsl: ",tsl))
