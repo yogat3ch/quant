@@ -5,7 +5,7 @@ params$live <- F
 
 # The Portfolio google sheet
 googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
-
+params$gs <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 # Fixed windows
 params$wind  <-  c(weeks = 5, moonphase = 5 * 2, mooncycle = 5 * 4, quarters = 5 * 12)
 
@@ -98,15 +98,17 @@ params$AlpacatoR_order_mutate <- function(l, tsl = '', live = '', ws = 0, wso = 
   l %<>% as.data.frame(stringsAsFactors = F) %>% cbind.data.frame(data.frame(Platform = "A"), ., stringsAsFactors = F)
   df <- dplyr::mutate_if(l, .predicate = ~is.character(.), ~trimws(.)) %>% dplyr::mutate_at(dplyr::vars(dplyr::ends_with("at")), ~ lubridate::as_datetime(., tz = "EST"))
   
-  if (df$side == "buy") {
+  if (df$side == "buy" & !is.na(df$filled_qty)) {
     df %<>% mutate(CB = filled_qty * filled_avg_price + ws)
     if (ws > 0) {
       df %<>% dplyr::mutate_at(dplyr::vars(order_type), ~paste0(., ' ws:', wso))
     }
     out <- cbind.data.frame(df, data.frame(GL = "", TSL = tsl, live = live, SID = "", stringsAsFactors = F), stringsAsFactors = F) 
-  } else {
+  } else if (df$side == "buy" & is.na(df$filled_at)) {
+    out <- cbind.data.frame(df, data.frame(CB = '', GL = '', TSL = tsl, live = live, SID = ""), stringsAsFactors = F) %>% dplyr::mutate(qty_remain = df$qty)
+  } else if (df$side == "sell") {
     out <- cbind.data.frame(df, data.frame(CB = '', GL = '', TSL = tsl, live = live, SID = ""), stringsAsFactors = F) %>% dplyr::mutate(qty_remain = 0)
-  }
+  } 
   return(out)
 }
 params$AlpacatoR_position_mutate <- function(df) {
@@ -153,14 +155,14 @@ params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NUL
     fn <- append(fn, paste0(name,lubridate::today(),".Rdata"))
     print(fn)
     i <- readline(prompt = "Choose the file name:")
-    save(list = name, file = paste0(where,fn[as.numeric(i)]), compress = "xz")
+    save(list = name, file = paste0(where,fn[as.numeric(i)]), compress = "bzip2", safe = T)
   }
 }
 
 # Function for retrieving new data
 # For Debugging:
 #rm(list = c(".dat", "last_bar", "local_fn", "date_history", "td_nm", "nms", ".cal", "cal", "lgl", "from_weeks", "new_data"))
-params$getPositions_new <- function(Positions_v, params){
+params$getPositions_new <- function(Positions_v, params, .retrieveAll = NULL){
   .bgJob <- any(stringr::str_detect(deparse(sys.calls()), "sourceEnv"))
   if (.bgJob) message(paste0("Running getPositions_new as Background Task"))
    
@@ -218,7 +220,7 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
     return(.dat)
   }
   
-  if (HDA::go(".retrieveAll", env = .GlobalEnv)) .retrieveAll <- get0(".retrieveAll", envir = .GlobalEnv) else .retrieveAll <- F
+  if (HDA::go(".retrieveAll", env = .GlobalEnv) & !HDA::go(.retrieveAll)) .retrieveAll <- get0(".retrieveAll", envir = .GlobalEnv) else .retrieveAll <- F
   message(paste0("Background job: ", .bgJob, " Retrieve all?: ", .retrieveAll))
   if (!.bgJob & !.retrieveAll){
     a <- readline(paste0("1. Retrieve data for ",.sym,"? \n 2. Skip ", .sym,"\n 3. Retrieve data for all? \n 4. Skip all"))
@@ -226,7 +228,7 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
       .retrieveAll <<- T
       }
   }
-  if (.retrieveAll) message(paste0("Retrieving data for ",.sym))
+  message(paste0("Retrieving data for ",.sym))
   # Retrieve the updated data
   new_bars <- AlpacaforR::get_bars(ticker = .sym, from = last_bar, to = lubridate::today())[[1]]
   if (HDA::go(.dat)) { # if the data exists on the HD
