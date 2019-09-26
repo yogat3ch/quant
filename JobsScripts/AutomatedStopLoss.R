@@ -58,7 +58,7 @@ if (nrow(Orders_unfilled) > 0) {
   }
 }
 
-  
+
 #Update Orders in the global Environment
 Orders <- googlesheets::gs_read(params$gs, ws = "Orders", col_types = params$Orders_cols)
 #End update buy orders
@@ -94,7 +94,7 @@ Orders_open <- Orders %>% dplyr::filter(Platform == "A" & (!is.character(SID) | 
 # #For debugging
 pmap_test <- list(.o_p = open_positions, .o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
 
-sell_updates <- purrr::pmap(list(.o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]), tax = tax, .o_p = open_positions, .f = function(.o_s, .a_o, .o_o, .o_p, tax){
+sell_updates <- purrr::pmap(list(.o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]), tax = tax, .o_p = open_positions, .m_n = merge_by_nms, .u_n = update_nms, .f = function(.o_s, .a_o, .o_o, .o_p, .m_n, .u_n, tax){
   # If the open shares according to google sheets != the open positions according to Alpaca then sell orders must be reconciled
   o_p.lgl <- vector()
   o_p.lgl[1] <- isTRUE(try({.o_p[[unique(.o_o$symbol)]]$qty_remain != .o_s}))
@@ -106,9 +106,9 @@ if (any(o_p.lgl)) {
   # Get the alpaca sell orders that were filled since that last TSL was set
   a_o_sell <- .a_o %>% filter(side == "sell" & status == "filled" & created_at >= prev_tsl_time) # Symbol is a given due to mapping
   # Merge the sold order info with the order info already in TSL_placed and add the unique ID to match buy & sell orders
-  merge_by_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][-c(4:9, 14:15, 22)]
-  update_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][c(4:9, 14:15, 22)]
-  filled_tsl <- a_o_sell %>% left_join(.o_o %>% select(-update_nms), by = merge_by_nms) %>% select(Platform, everything()) %>% dplyr::mutate_at(dplyr::vars(Platform), ~ {.  <-  "A"})
+  merge_by_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][- {names(a_o_sell) %in% .m_n %>% which}]
+  update_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][- {names(a_o_sell) %in% .m_n %>% which}]
+  filled_tsl <- a_o_sell %>% left_join(.o_o %>% select(- .u_n), by = .m_n) %>% select(Platform, everything()) %>% dplyr::mutate_at(dplyr::vars(Platform), ~ {.  <-  "A"})
   
   # ----------------------- Sun Aug 18 07:05:12 2019 ------------------------#
   #TODO Buy orders need to be matched to sell orders by the trailing stop loss type
