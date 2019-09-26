@@ -11,12 +11,11 @@ if (!HDA::go("train_rvs")) {train_rvs <- NULL ; message("No train_rvs, setting a
 mod.packages <- c("doParallel","iterators","parallel","foreach","earth", "RSNNS", "xgboost", "plyr") # [package dependencies]
 HDA::startPkgs(mod.packages)
 total.time <- system.time({
-purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = train_rvs, function(.dat, .b_tsl, .mS, train_rvs){
+purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl[names(dat)], .mS = modelSpecs[names(dat)]), train_rvs = train_rvs, function(.dat, .b_tsl, .mS, train_rvs){
   tick <- attr(.dat, "Sym") %>% unlist # Get the symbol of the data and store it
   message(paste0("Training: ",tick," Now: ",lubridate::now()))
   if (zoo::is.zoo(.dat)) .dat <-  zoo::fortify.zoo(.dat) # If still xts, convert to df
-  if (!is.null(.b_tsl)) train_rvs <- c(.b_tsl[["tsl_types"]][["tsl"]], train_rvs) %>% unique # If best_tsl is included then add that RV to the ones to be trained
-  train_rvs <- paste0(train_rvs,"_rv")
+  if (HDA::go(.b_tsl)) train_rvs <- c(paste0(.b_tsl[["tsl_types"]][["tsl"]],"_rv"), train_rvs) %>% unique # If best_tsl is included then add that RV to the ones to be trained
     try({load(file = paste0("~/R/Quant/MdlBkp/",tick, "_cl.Rdata"))}) #Try to load previous models
   ob <- get0(paste0(tick, "_cl"), mode = "list") # If it loads, save it as ob
   # If .replace is TRUE Remove models from object
@@ -24,14 +23,14 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
     ob <- ob[!names(ob) %in% train_rvs]
   } else if (!is.null(ob) & sum(train_rvs %in% names(ob)) > 0 & !.replace) {
     # If false remove already trained rvs from train_rvs
-    train_rvs <- train_rvs[!names(train_rvs) %in% names(ob)]
+    train_rvs <- train_rvs[!train_rvs %in% names(ob)]
     }
   
   message(paste0(tick," RVs: ", paste(train_rvs, collapse = ", ")))
   if (length(train_rvs) < 1) {
     message("No models to train.")
     #message(paste("Objects: ",paste(ls(), collapse = " ")))
-    rm(list = c(paste0(tick,"_cl")))
+    rm(list = c(paste0(tick,"_cl"),"ob"))
     gc()
     return(NULL)
     } #If nothing to train just return the object and clear the memory.
@@ -43,7 +42,7 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
   #Initiate packages
   out <- purrr::map(train_rvs, .pf = sys.frame(sys.nframe()), function(nm, .pf){
       td_nm <- stringr::str_extract(names(.pf$.dat), "^time$|^date$") %>% purrr::discard(is.na)
-      rvs <- stringr::str_extract_all(names(.pf$.dat), ".*rv$|.*ind$|.*type$") %>% purrr::compact() %>% unlist %>% .[{. != nm}]
+      rvs <- stringr::str_extract_all(names(.pf$.dat), ".*rv$|.*ind$|.*type$") %>% purrr::compact() %>% unlist %>% .[{!. %in% c(nm,paste0(nm,"_ind"))}]
       if (is.character(.pf$.dat[[nm]]) | is.factor(.pf$.dat[[nm]]) ) {metric <- "Accuracy"} else {metric <- "MAE"}
       
       frm <- formula(paste(paste0("`",nm,"`"), "~ ."))
@@ -51,13 +50,15 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
       # PreProcessing Data
       # 1. remove extraneous columns
       out <- .pf$.dat[ ,!names(.pf$.dat) %in% c(rvs,td_nm)]
-      # 2. Make model frame
+      # 2. Remove all TSL predictions after the last legitimate sale (those calculated based on the end of the timeseries) then remove the index
+      out %<>% na.omit() %>% select(-ends_with("ind"))
+      # 3. Make model frame
       out <- model.frame(frm, out)
-      # 3. remove any columns that may be matrices
+      # 4. remove any columns that may be matrices
       out <- dplyr::mutate_if(out, .predicate = is.matrix, ~ as.vector(.))
-      #4. Create dummyVars from factors
+      #5. Create dummyVars from factors
       out <- caret::dummyVars(frm, data = out) %>% predict(., newdata = out)
-      # 5. remove highly correlated variables
+      # 6. remove highly correlated variables
       out.cor <- cor(out) %>% as.data.frame %>% tibble::rownames_to_column() %>% mutate_if(.predicate = is.numeric, ~ ifelse(is.na(.),0,.)) %>% tibble::column_to_rownames() %>% as.matrix
        out <- out[ , - caret::findCorrelation(out.cor, cutoff = .95)]
        rm(out.cor)
@@ -106,7 +107,7 @@ purrr::pwalk(list(.dat = dat, .b_tsl = best_tsl, .mS = modelSpecs), train_rvs = 
       out <- append(ob, out)
       assign(paste0(tick, "_cl"), out)
     } else assign(paste0(tick,"_cl"), out)
-    save(list = paste0(tick,"_cl"), file = paste0("~/R/Quant/MdlBkp/",tick,"_cl.Rdata"), compress = "xz")
+    save(list = paste0(tick,"_cl"), file = paste0("~/R/Quant/MdlBkp/",tick,"_cl.Rdata"), compress = "bzip2", safe = T)
     message(paste("Saved",tick, "Object"))
     message(paste0(tick, " cleanup:", paste(ls(all.names = T), collapse = ",")))
     if (!is.null(ob)) rm(list = c(paste0(tick,"_cl")))
