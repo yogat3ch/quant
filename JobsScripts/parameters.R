@@ -162,11 +162,11 @@ params$dataUtil <- function(reg = NULL, as.suffix = F, object = NULL, name = NUL
 # Function for retrieving new data
 # For Debugging:
 #rm(list = c(".dat", "last_bar", "local_fn", "date_history", "td_nm", "nms", ".cal", "cal", "lgl", "from_weeks", "new_data"))
-params$getPositions_new <- function(Positions_v, params, .retrieveAll = NULL){
+params$getPositions_new <- function(Positions_v, .retrieveAll = NULL){
   .bgJob <- any(stringr::str_detect(deparse(sys.calls()), "sourceEnv"))
   if (.bgJob) message(paste0("Running getPositions_new as Background Task"))
    
-dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
+dat <- purrr::map(Positions_v, .f = function(.sym){
   # Get the Historical Data filename from the HD
   local_fn <- list.files(path = "~/R/Quant/PositionData", pattern = paste0(.sym,"\\d{4}\\-\\d{2}\\-\\d{2}\\_\\d{4}\\-\\d{2}\\-\\d{2}\\.csv"), full.names = T)
   message(local_fn)
@@ -215,12 +215,16 @@ dat <- purrr::map(Positions_v, params = params, .f = function(.sym, params){
   # AND there is data for .dat
   lgl[3] <- HDA::go(.dat)
   message(lgl)
-  if ( lgl[1] & lgl[3] | lgl[2] & lgl[3] ) {
+  if ( lgl[1] & lgl[2] | lgl[2] & lgl[3] ) {
     attr(.dat, "Sym") <- .sym
     return(.dat)
   }
-  
-  if (HDA::go(".retrieveAll", env = .GlobalEnv) & !HDA::go(.retrieveAll)) .retrieveAll <- get0(".retrieveAll", envir = .GlobalEnv) else .retrieveAll <- F
+  if (!HDA::go(.retrieveAll)) { # if .retrieveAll is not in the current env
+  if (HDA::go(".retrieveAll", env = .GlobalEnv)) { # if its in the global environment
+    .retrieveAll <- get0(".retrieveAll", envir = .GlobalEnv) # get it
+    
+  } else .retrieveAll <- F # otherwise set it as false.
+    }
   message(paste0("Background job: ", .bgJob, " Retrieve all?: ", .retrieveAll))
   if (!.bgJob & !.retrieveAll){
     a <- readline(paste0("1. Retrieve data for ",.sym,"? \n 2. Skip ", .sym,"\n 3. Retrieve data for all? \n 4. Skip all"))
