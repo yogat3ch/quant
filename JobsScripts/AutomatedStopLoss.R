@@ -69,7 +69,7 @@ open_orders <- Orders %>% dplyr::filter(Platform == "A" & side == "buy" & status
 closed_orders <- Orders %>% dplyr::filter(Platform == "A" & side == "sell" & status == "filled" & qty_remain == 0) %>% dplyr::group_by(symbol) %>% dplyr::arrange(dplyr::desc(filled_at), .by_group = T) %>% dplyr::summarize(Cum.Shares = sum(filled_qty))
 # Get the number of open shares per symbol from the Orders sheet
 open_shares <- purrr::map2(.x = split(open_orders, open_orders$symbol), .y = split(closed_orders, open_orders$symbol), function(.x, .y){
-  if (HDA::go(.y$symbol) & HDA::go(.x$symbol)) {
+  if (HDA::go(".y$symbol") & HDA::go(".x$symbol")) {
     out <- .x[["Cum.Shares"]] - .y[["Cum.Shares"]]
   } else  out <- .x[["Cum.Shares"]]
   return(out)
@@ -92,13 +92,13 @@ A_open <- all_orders %>% dplyr::filter(symbol %in% names(open_shares)) %>% dplyr
 #TODO 2019-08-18 0805 Revise to make use of Active sheet where trailing stop losses will be tracked
 Orders_open <- Orders %>% dplyr::filter(Platform == "A" & (!is.character(SID) | qty_remain > 0))
 # #For debugging
-pmap_test <- list(.o_p = open_positions, .o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]) %>% purrr::map(1) %>% list2env(envir = .GlobalEnv)
+#pmap_test <- list(.o_p = open_positions, .o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)],.o_p = open_positions[names(open_shares)]) %>% purrr::map(1) %>% append(tax) %>% append(list(.o_p = open_positions[names(open_shares)])) %>% list2env(envir = .GlobalEnv)
 
-sell_updates <- purrr::pmap(list(.o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]), tax = tax, .o_p = open_positions, .m_n = merge_by_nms, .u_n = update_nms, .f = function(.o_s, .a_o, .o_o, .o_p, .m_n, .u_n, tax){
+sell_updates <- purrr::pmap(list(.o_s = open_shares, .a_o = split(A_open, A_open$symbol)[names(open_shares)], .o_o = split(Orders_open, Orders_open$symbol)[names(open_shares)]), .o_p = open_positions[names(open_shares)],  tax = tax, .f = function(.o_s, .a_o, .o_o, .o_p, tax){
   # If the open shares according to google sheets != the open positions according to Alpaca then sell orders must be reconciled
   o_p.lgl <- vector()
   o_p.lgl[1] <- isTRUE(try({.o_p[[unique(.o_o$symbol)]]$qty_remain != .o_s}))
-  o_p.lgl[2] <- !HDA::go(.o_p)
+  o_p.lgl[2] <- !HDA::go(".o_p")
 if (any(o_p.lgl)) {
   message("Updating orders...")
   # Get the previous time at which the stop loss was set
@@ -175,11 +175,12 @@ if (any(o_p.lgl)) {
   sell_updates <- bind_rows(sell_update)
 } # Close if statement
   
-  if (HDA::go(sell_updates)) out <- sell_updates else out <- NULL
+  if (HDA::go("sell_updates")) out <- sell_updates else out <- NULL
 return(out)
 })
 # Update Positions_tsl & googlesheets
-if (HDA::go(sell_updates[[l]])) {
+if (any(purrr::map_lgl(sell_updates, ~ HDA::go(.x)))) {
+  sell_updates %<>% subset(subset = purrr::map_lgl(sell_updates, ~ HDA::go(.x)))
   for (l in seq_along(sell_updates)) {
     for (i in 1:nrow(sell_updates[[l]])) {
   # Update Googlesheets
@@ -192,7 +193,8 @@ if (HDA::go(sell_updates[[l]])) {
   }
 }
 
-
+# Load Positions_new
+Positions_new <- params$getPositions_new(names(open_shares), .retrieveAll = T)
 
 # ----------------------- Thu Jul 04 10:23:53 2019 ------------------------#
 # Set the trailing stop losses 
@@ -201,26 +203,32 @@ if (HDA::go(sell_updates[[l]])) {
 Orders <- googlesheets::gs_read(params$gs, ws = "Orders", col_types = params$Orders_cols)
 
 # for Debugging
-list(.o_p = open_positions, .orders = split(Orders %>% filter(Platform == "A"), Orders %>% filter(Platform == "A") %>% .[["symbol"]])[names(open_shares)]) %>% purrr::map(1) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
+list(.o_p = open_positions[names(open_shares)], .orders = split(Orders %>% filter(Platform == "A"), Orders %>% filter(Platform == "A") %>% .[["symbol"]])[names(open_shares)], .o_s = open_shares, .p_n = Positions_new) %>% purrr::map(1) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
 
 
 
 
 
-purrr::pwalk(list(.o_p = open_positions, .orders = split(Orders, Orders$symbol)[names(open_shares)], .o_s = open_shares), TSLvars = params$TSLvars, gs = params$gs, Orders = Orders, .f = function(.o_p, .orders, .o_s, TSLvars, gs, Orders){
+purrr::pwalk(list(.o_p = open_positions[names(open_shares)], .orders = split(Orders, Orders$symbol)[names(open_shares)], .o_s = open_shares, .p_n = Positions_new), TSLvars = params$TSLvars, gs = params$gs, Orders = Orders, .f = function(.o_p, .orders, .o_s, TSLvars, gs, Orders){
   
-  if(!HDA::go(.o_p)) {
+  if(!HDA::go(".o_p")) {
     message(paste0(unique(.o_p$symbol),": returning NULL"))
     return(NULL)
     }
   message(unique(.o_p$symbol))
   
-  #TODO Load local PositionData
+
   
   # Setting stop losses
   # Get all previous stop losses recorded in the sheet
+  # There should not be discrepancies between these 
   prev_tsl.orders <- .orders %>% dplyr::filter(side == "sell" & stringr::str_detect(status, "new|open")) %>% dplyr::mutate(cum.shares = cumsum(qty))
-  prev_tsl.alpaca <- AlpacaforR::get_orders(ticker = unique(.o_p$symbol)) %>% dplyr::filter(side == "sell")
+  prev_tsl.alpaca <- AlpacaforR::get_orders(ticker = unique(.o_p$symbol), status = "all")
+  if (HDA::go(prev_tsl.alpaca)) {
+    prev_tsl.alpaca %<>% dplyr::filter(side == "sell") %>% dplyr::filter(is.na(filled_at))
+  }
+   
+  
   # Retrieve the filled buy orders themselves (such that the data can be filtered according to when the purchase was made)
   tsl_orders <- .orders %>% dplyr::filter(side == "buy" & status == "filled" & qty_remain > 0) %>% dplyr::mutate(cum.shares = cumsum(qty_remain))
   tsl_orders$peaks <- purrr::map_dbl(tsl_orders$filled_at, .new_data = new_data, function(.x, .new_data) {
@@ -240,11 +248,11 @@ purrr::pwalk(list(.o_p = open_positions, .orders = split(Orders, Orders$symbol)[
     # calculate tsl based on other types
     tsl_sum %<>% dplyr::group_by(TSL, live) %>% dplyr::summarise(qty = sum(qty)) %>% dplyr::ungroup()
     # Subtract the stop loss amounts from the peaks
-    tsl_sum %<>% dplyr::mutate(SL = purrr::pmap_dbl(list(TSL, live, qty, peaks, filled_at), .data = new_data, TSLvars = TSLvars, function(TSL, live, qty, peaks, filled_at, .data, TSLvars) {
+    tsl_sum %<>% dplyr::mutate(SL = purrr::pmap_dbl(list(TSL, live, qty, peaks, filled_at), .dat = .p_n, TSLvars = TSLvars, function(TSL, live, qty, peaks, filled_at, .dat, TSLvars) {
       tsl_amt <- attr(TSLvars, "tsl_amt")
       .args <- TSLvars[TSL]
       .args[[1]]$dtref <- filled_at
-      amt <- tsl_amt(.data = .data, .args = .args[1])
+      amt <- tsl_amt(.data = .dat, .args = .args[1])
       out <- peaks - amt
       return(out)
     })
