@@ -1,0 +1,198 @@
+---
+title: "Title"
+author: "Stephen Synchronicity"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+always_allow_html: yes
+header-includes:
+   - \usepackage{dcolumn}
+output: 
+  html_document: 
+    self_contained: yes
+    css: C:\Users\Administrator\Documents\R\win-library\3.5\neuhwk\rmarkdown\templates\DA5030\resources\bootstrap.min.css
+    highlight: zenburn
+    keep_md: no
+    theme: spacelab
+    toc: TRUE
+    toc_float: TRUE
+    df_print: paged
+    code_folding: hide
+---
+```{r setup, include=FALSE}
+# Knitr Options
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = FALSE, cache = TRUE, fig.align = 'center', fig.height = 5, fig.width = 7.5, tidy = TRUE, tidy.opts = list(width.cutoff = 80))
+options(scipen = 12)
+# Make reproducible
+set.seed(1)
+# Load packages
+
+source("~/R/Quant/JobsScripts/parameters.R")
+HDA::startPkgs(c("dplyr","magrittr","printr", "AlpacaforR"))
+# # Attach dependencies
+# rmarkdown::html_dependency_jquery()
+# rmarkdown::html_dependency_bootstrap("spacelab")
+# rmarkdown::html_dependency_jqueryui()
+# # Use Chunk Titles to add Bold Headings to Chunks
+# source("~/R/Scripts/addChunkTitles.R")
+# rmd <- addChunkTitles(rstudioapi::getSourceEditorContext()$path)
+# write(rmd,file=(rstudioapi::getSourceEditorContext()$path))
+# # HTML to Latex
+# source("~/R/Scripts/HTMLtoLatex.R")
+# rmd <- HTMLtoLatex(rstudioapi::getSourceEditorContext()$path)
+# write(rmd,file=(rstudioapi::getSourceEditorContext()$path))
+```
+
+
+```{r 'Get Positions', eval = F}
+.token <- gargle::oauth_app_from_json("~/R/google_oauth.json")
+googlesheets4::sheets_auth("sholsen@alumni.emory.edu", token = .token)
+Positions <- googlesheets4::sheets_read("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0", sheet = "Personal")
+(Positions_v <- Positions[-c(1, 2), 1, drop = T])
+```
+
+```{r 'Get Positions Quick'}
+wl <- watchlist("Primary")
+Positions_v <- wl$symbol %>% setNames(nm = .)
+```
+
+```{r, 'Retrieve RV lagged data', eval = F}
+# for RVs to be computed properly, the data must start from the maximum duration  RV windows prior.
+market_data_rvs <- function(ticker, multiplier = 1, timeframe = "day", from = NULL, to = NULL, full = TRUE, max.duration = lubridate::weeks(4)) {
+  from <- AlpacaforR:::try_date(from)
+  from <- from - (max.duration + lubridate::days(1))
+  dat <- market_data(ticker, v = 2, multiplier = multiplier, timeframe = timeframe, from = from, to = to, full = full)
+}
+lagdat <- market_data_rvs(Positions_v, timeframe = "h", from = "2020-03-01", to = head(dat[[1]]$time, 1), full = TRUE)
+
+```
+
+
+```{r, 'Write data to db', eval = F}
+db <- RSQLite::dbConnect(RSQLite::SQLite(), "db/HourlyData.db")
+purrr::iwalk(dat, ~{
+  RSQLite::dbWriteTable(db, paste0(.y), .x, overwrite = T)
+})
+RSQLite::dbListTables(db)
+RSQLite::dbDisconnect(db)
+```
+
+```{r 'Retrieve daily data from db'}
+db <- RSQLite::dbConnect(RSQLite::SQLite(), "db/Daily.db")
+wt <- purrr::imap(pos, ~{
+  RSQLite::dbWriteTable(db, paste0(.y), .x)
+})
+RSQLite::dbListTables(db)
+RSQLite::dbDisconnect(db)
+db <- RSQLite::dbConnect(RSQLite::SQLite(), dbname = "db/Daily.db")
+dat <- purrr::imap(pos, ~{
+  RSQLite::dbReadTable(db, .y) %>% 
+    dplyr::mutate_at(dplyr::vars(time),lubridate::as_datetime, tz = "America/New_York")
+})
+```
+
+```{r 'Retrieve hourly data from db'}
+db <- RSQLite::dbConnect(RSQLite::SQLite(), dbname = "db/HourlyData.db")
+Positions_v <- RSQLite::dbListTables(db) %>% stringr::str_subset("_", negate = TRUE) %>%  setNames(., .)
+dat <- purrr::map(Positions_v, ~{
+  .out <- RSQLite::dbReadTable(db, .x) %>% 
+    dplyr::mutate_at(dplyr::vars(time),lubridate::as_datetime, tz = "America/New_York")
+  .ti <- rlang::sym(params$time_index(.out))
+  browser(expr = any(duplicated(.out$time)))
+  .out <- tsibble::as_tsibble(dplyr::filter(.out, lubridate::hour(!!.ti) >= 10 & lubridate::hour(!!.ti) < 17), index = !!.ti, regular = FALSE)
+  attr(.out, "Sym") <- .x
+  .out
+})
+
+```
+
+
+```{r 'Update Data'}
+
+newdat <- AlpacaforR::market_data(names(dat), v = 2, timeframe = "h", from = tail(dat$AMZN$time, 1), to = lubridate::today(), full = T)
+`!!` <- rlang::`!!`
+dat <- purrr::map2(dat, newdat, ~{
+  .sym <- attr(.x, "Sym")
+  .ti <- rlang::sym(params$time_index(.x))
+  .out <- dplyr::distinct(dplyr::bind_rows(
+  tibble::as_tibble(.x),
+  tibble::as_tibble(.y)
+), !!.ti, .keep_all = TRUE)
+  .in <- dplyr::filter(.out, time != .x$time)
+  if (nrow(.in) > 0) {
+    RSQLite::dbWriteTable(db, .sym, .in, append = TRUE)
+  }
+  .out <- tsibble::as_tsibble(dplyr::filter(.out, lubridate::hour(!!.ti) >= 10 & lubridate::hour(!!.ti) < 17), index = !!.ti, regular = FALSE)
+  attr(.out, "Sym") <- .sym
+  .out
+})
+lubridate::today()
+```
+
+
+```{r 'Add RVs to Data'}
+# Set the signal windows desired in parameters.r
+.add <- F
+.dbname <- "~/R/Quant/db/HourlyData.db"
+dat <- .d
+dat <- dat[10]
+save(dat, .add, .dbname, file = "~/R/Quant/dat.Rdata")
+rstudioapi::jobRunScript("~/R/Quant/JobsScripts/AddRVstoData.R", exportEnv = "R_GlobalEnv", importEnv = F)
+# Save
+```
+
+```{r 'addTK'}
+addTK <- function(.x) {
+  .tr_p <- recipes::recipe(.x) %>%
+    recipes::update_role(tidyselect::everything(), new_role = "predictor") %>% 
+    recipes::update_role(tidyselect::ends_with("rv"), new_role = "outcome") %>% 
+    timetk::step_timeseries_signature(time)  %>% 
+    recipes::step_rm(time) %>% 
+    recipes::step_rm(tidyselect::contains("iso"),
+                     tidyselect::contains("second"),tidyselect::contains("minute"),tidyselect::contains("hour"),
+                     tidyselect::contains("am.pm"),tidyselect::contains("xts")) %>% 
+    recipes::step_normalize(tidyselect::contains("index.num"), time_year) %>% 
+    recipes::step_interact(~ time_month.lbl * time_day) %>% 
+    recipes::step_interact(~ time_month.lbl * time_mweek) %>% 
+    recipes::step_interact(~ time_month.lbl * time_wday.lbl * time_yday) %>% 
+    recipes::step_dummy(tidyselect::contains("lbl"), one_hot = T)
+  .tr_bake <- recipes::bake(recipes::prep(.tr_p), new_data = .x)
+  return(.tr_bake)
+}
+```
+```{r 'Add IVs'}
+.test <- purrr::map(dat, addTK)
+```
+
+
+
+
+```{r 'Create Test and Train Data'}
+(.cutoff_date <- lubridate::floor_date(lubridate::today(), unit = "week"))
+(oot_g <- purrr::imap(dat, ~{
+  .max <- .x %>% {max(purrr::map_dbl(.[c("open", "high", "low", "close")], max)) + 10}
+  .x %>% 
+    ggplot(aes(x = time, y = close)) +
+    geom_barchart(aes(open = open, high = high, low = low, close = close)) +
+    labs(title = paste0(.y, " Bar Chart"), 
+         y = "Closing Price", x = "") + 
+    geom_rect(xmin = .cutoff_date,
+              xmax = max(.[["time"]]),
+              ymin = 0, ymax = .max,
+              fill = palette_light()[[4]], alpha = 0.01) +
+    theme_tq()
+}))
+```
+
+
+```{r 'start model training pkgs'}
+HDA::startPkgs(c("workflows", "parsnip", "recipes", "yardstick", "tune", "glmnet", "tidyverse", "tidyquant", "timetk"))
+```
+
+```{r 'Feature Addition'}
+dat <- Positions_ts
+# Set the signal windows desired in parameters.r
+source("~/R/Quant/JobsScripts/parameters.R")
+add <- F
+save(dat, TSLvars, add, file = "~/R/Quant/dat.Rdata")
+rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+```
+

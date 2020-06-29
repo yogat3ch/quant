@@ -7,75 +7,76 @@
 #'  \item{\code{tslp}}{\code{(double)} A double vector with the percent as decimal of the peak to set as the stop loss}
 #'    }
 #' @export
-TSL <- function(v, .args, verbose = F) {
-  if (verbose) print(names(.args)[1])
-  tsl_amt <- .args$tsl_amt
-  if (!quantmod::is.HLC(v) & !all(tibble::is_tibble(v) & any(stringr::str_detect(names(v),stringr::regex("^date$|^time$", ignore_case = T))) & any(stringr::str_detect(names(v),stringr::regex("high", ignore_case = T))) & any(stringr::str_detect(names(v),stringr::regex("low", ignore_case = T)))) ) stop("Requires an HLC timeseries object (xts) or a tibbletime with a date or time and hlc columns")
-  # Check that the object supplied is either an XTS or tibbletime with appropriately labelled index and high/low columns
-  
-  cl_nm <- c(high = stringr::str_extract(colnames(v), stringr::regex("^high", ignore_case = T)) %>% subset(subset = !is.na(.)),
-    low =   lo_cl <- stringr::str_extract(colnames(v), stringr::regex("^low", ignore_case = F)) %>% subset(subset = !is.na(.)),
-    close =   stringr::str_extract(colnames(v), stringr::regex("^close", ignore_case = F)) %>% subset(subset = !is.na(.)))
-  if (any(stringr::str_detect(class(v), stringr::regex("tbl_time|data.frame")))){
-  cl_nm <- c(time = stringr::str_extract(colnames(v), stringr::regex("^time|date", ignore_case = T)) %>% subset(subset = !is.na(.)) %>% .[1], cl_nm)
-  # Get the column indexes and subset
-  v <- v[,cl_nm]
-  } else {v <- v[,cl_nm]}
+TSL <- function(v, tsl = NULL, tsl_amt = NULL, time_index = NULL) {
+  if (!quantmod::is.HLC(v) &
+      !all(
+        tibble::is_tibble(v) &
+        any(stringr::str_detect(
+          names(v), stringr::regex("^date$|^time$", ignore_case = T)
+        )) &
+        any(stringr::str_detect(
+          names(v), stringr::regex("high", ignore_case = T)
+        )) &
+        any(stringr::str_detect(
+          names(v), stringr::regex("low", ignore_case = T)
+        ))
+      )) {
+    # Check that the object supplied is either an XTS or tibbletime with appropriately labelled index and high/low columns
+    stop("Requires an HLC timeseries object (xts) or a tibbletime with a date or time and hlc columns")
+  }
+  verbose <- isTRUE(get0(".dbg", envir = .GlobalEnv))
+  cl_nm <- c(
+    t = time_index(v),
+    o = purrr::keep(stringr::str_extract(colnames(v), stringr::regex("^open$", ignore_case = T)), ~ !is.na(.x)),
+    h = purrr::keep(stringr::str_extract(colnames(v), stringr::regex("^high$", ignore_case = T)), ~ !is.na(.x)),
+    l = purrr::keep(stringr::str_extract(colnames(v), stringr::regex("^low$", ignore_case = T)), ~ !is.na(.x)),
+    c = purrr::keep(stringr::str_extract(colnames(v), stringr::regex("^close$", ignore_case = T)), ~ !is.na(.x))
+  )
+  v <- v[, cl_nm]
   # Primary Loop starts here
   s <- attr(v, "Sym")
-  out <- purrr::map(1:nrow(v), verbose = verbose, s = s, .f = function(.x, verbose, s) {
+  out <- purrr::map_dfr(1:nrow(v), ~{
     i <- dayi <- .x # Save as the increment i and initial index day
-    if (xts::is.xts(v)) .args[[1]]$dtref <- time(v)[i] else .args[[1]]$dtref <- v[i, cl_nm[["time"]], drop = T]
-    
-    price <- as.numeric(v[i, cl_nm[["close"]], drop = T])
-    peak <- as.numeric(v[i, cl_nm[["high"]], drop = T])
-    tsl <- peak - price + 1
+    price <- as.numeric(v[i, cl_nm["c"], drop = T])
+    peak <- as.numeric(v[i, cl_nm["h"], drop = T])
+    .tsl <- peak - price + .1
+    .open <- FALSE
     if (verbose)  message(paste0(s," fn(TSL) row#: ", .x))
-    while (price >= peak - tsl) {
+    while (price >= peak - .tsl) {
+      if (i > nrow(v)) break
       # Get the datetime reference
-      if (xts::is.xts(v)) .args[[1]]$dtref <- time(v)[i] else .args[[1]]$dtref <- v[i, cl_nm[["time"]], drop = T]
-      # if (verbose) message(paste0("dtref: ",.args[[1]]$dtref," next date: ",.args[[1]]$dtref - .args[[1]]$retro))
+      if (xts::is.xts(v))
+        .dtref <- time(v)[i]
+      else
+        .dtref <- v[i, cl_nm["t"], drop = T]
       # Get the tsl amount
-      #2019-09-20 Because these are recalculated as the TSL moves along the dataset, tslsd & tslret will make it such that during periods of little variance the position is likely to be sold. This is because the tsl is recalculated and subtracted from the peak at each time point as it moves along the dataset.
+      #2019-09-20 Because these are recalculated as the TSL moves along the dataset, tslsd & tslret will make it such that during periods of little variance the position is likely to be sold. This is because the tsl is recalculated and subtracted from the peak at each time point as it moves along the dataset. 
       if (i == .x) { # Added to address the above 2019-09-20 
-      # if its tslsd
-      if (!is.null(.args$tslsd)) tsl <- tsl_amt(.data = v, .args[1])
-      # if its tslret 
-      if (!is.null(.args$tslret)) tsl <- tsl_amt(.data = v, .args[1])
+        .tsl <- tsl_amt(v, tsl = tsl, .dtref = .dtref, cl_nm = cl_nm)
       }
-      # if its tslp
-      if (!is.null(.args$tslp)) tsl <- peak * .args$tslp[[1]]
-      #if (verbose) message(paste0("tsl: ",tsl))
-      
-      #if (verbose) print(c(.x = .x, tsl = tsl,price = price, peak = peak, i = i))
-      price <- as.numeric(v[i, cl_nm[["low"]], drop = T])
-      peak <- as.numeric(max(v[dayi:i, cl_nm[["high"]], drop = T]))
+
+      price <- as.numeric(v[i, cl_nm["l"], drop = T])
+      peak <- as.numeric(max(v[dayi:i, cl_nm["h"], drop = T], na.rm = TRUE))
       
       if (i == nrow(v)) {
         # Add a variable to flag for an open order that does not sell by the end of the data
         if (verbose) message("End of data reached, no sale")
         .open <- T
-        break
-        }
+      }
       i <- i + 1
     }
-    pct_gain <- (mean(as.numeric(v[i, cl_nm[c("high","low","close")], drop = T])) - as.numeric(v[dayi, cl_nm[["close"]], drop = T])) / as.numeric(v[dayi, cl_nm[["close"]], drop = T])
+    .buy_price <- mean(as.numeric(v[dayi, cl_nm[c("h","l","c")], drop = T]), na.rm = TRUE)
+    pct_gain <- ((as.numeric(v[i, cl_nm[c("h")], drop = T]) - .tsl) - .buy_price) / .buy_price
   # return the percent change of the original price and the date on which the TSL is triggered.
     if (length(pct_gain) != 1) stop("Length of pct_gain is not 1")
-    #TODO Assign .open to F and test
-    if (!HDA::go(".open")) .open <- F
-    if (verbose) message(paste0(".open: ",.open))
     if (.open) {
-      if (verbose) message("Adding ind as NA")
-      out <- c(pct_gain, NA)
+      out <- data.frame(p = pct_gain, d = NA)
     } else {
-      out <- c(pct_gain, v[i, cl_nm[["time"]], drop = T])
+      out <- data.frame(p = pct_gain, d = v[i, cl_nm["t"], drop = T])
     }
-      
-      
     return(out)
   })
   if (verbose) message(paste0(lubridate::now(), "fn TSL result: ", paste0(out, collapse = ", ")))
-  return(do.call("rbind",out))
+  return(out)
 }
 
