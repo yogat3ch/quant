@@ -118,9 +118,9 @@ attr(params$TSLvars, "tsl_amt") <- function(.dat, tsl, .dtref, cl_nm){
   # Make the names simple for following if statements
   tsl_type <- stringr::str_extract(names(tsl), stringr::regex("^[A-Za-z]+"))
   .tsl <- tsl[[1]]
-  .dbg <- get0(".dbg", envir = .GlobalEnv)
+  .dbg <- isTRUE(get0(".dbg", envir = .GlobalEnv))
   td_nm <- rlang::sym(cl_nm["t"])
-  if (isTRUE(.dbg)) message(tsl_type)
+  if (.dbg) message(tsl_type)
   if (grepl("sd|ret", tsl_type, ignore.case = T)) {
     #message(paste0("Cols: ", colnames(.data)))
     # if its a tbl_time or data.frame

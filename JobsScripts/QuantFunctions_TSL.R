@@ -33,50 +33,132 @@ TSL <- function(v, tsl = NULL, tsl_amt = NULL, time_index = NULL) {
     c = purrr::keep(stringr::str_extract(colnames(v), stringr::regex("^close$", ignore_case = T)), ~ !is.na(.x))
   )
   v <- v[, cl_nm]
+  .ohlc <- quantmod::OHLC(v)
+  .h <- unlist(v[, cl_nm["h"]])
+  .l <- unlist(v[, cl_nm["l"]])
+  .nrv <- nrow(v)
   # Primary Loop starts here
   s <- attr(v, "Sym")
   out <- purrr::map_dfr(1:nrow(v), ~{
-    i <- dayi <- .x # Save as the increment i and initial index day
-    price <- as.numeric(v[i, cl_nm["c"], drop = T])
-    peak <- as.numeric(v[i, cl_nm["h"], drop = T])
-    .tsl <- peak - price + .1
-    .open <- FALSE
-    if (verbose)  message(paste0(s," fn(TSL) row#: ", .x))
-    while (price >= peak - .tsl) {
-      if (i > nrow(v)) break
-      # Get the datetime reference
-      if (xts::is.xts(v))
-        .dtref <- time(v)[i]
-      else
-        .dtref <- v[i, cl_nm["t"], drop = T]
-      # Get the tsl amount
-      #2019-09-20 Because these are recalculated as the TSL moves along the dataset, tslsd & tslret will make it such that during periods of little variance the position is likely to be sold. This is because the tsl is recalculated and subtracted from the peak at each time point as it moves along the dataset. 
-      if (i == .x) { # Added to address the above 2019-09-20 
-        .tsl <- tsl_amt(v, tsl = tsl, .dtref = .dtref, cl_nm = cl_nm)
+    e <- new.env()
+    e$peak <- .buy_price <- mean(unlist(.ohlc[.x,]), na.rm = TRUE)
+    i <-  .x
+    e$li_max <- .nrv
+    while (i <= length(.h)) {
+      if (.h[i] > e$peak[length(e$peak)]) {
+        if (i == .x) {e$peak <- NULL; e$pi <- NULL}
+        e$peak <- append(e$peak, .h[i])
+        e$pi <- append(e$pi, i)
+        i <- suppressWarnings(which(.h[(i+1):.nrv] > .h[i])[1] + i)
+        if (length(i) < 1 || is.na(i)) break
+      } else {
+        i <- i + 1
       }
-
-      price <- as.numeric(v[i, cl_nm["l"], drop = T])
-      peak <- as.numeric(max(v[dayi:i, cl_nm["h"], drop = T], na.rm = TRUE))
-      
-      if (i == nrow(v)) {
-        # Add a variable to flag for an open order that does not sell by the end of the data
-        if (verbose) message("End of data reached, no sale")
-        .open <- T
-      }
-      i <- i + 1
     }
-    .buy_price <- mean(as.numeric(v[dayi, cl_nm[c("h","l","c")], drop = T]), na.rm = TRUE)
-    pct_gain <- ((as.numeric(v[i, cl_nm[c("h")], drop = T]) - .tsl) - .buy_price) / .buy_price
-  # return the percent change of the original price and the date on which the TSL is triggered.
-    if (length(pct_gain) != 1) stop("Length of pct_gain is not 1")
-    if (.open) {
-      out <- data.frame(p = pct_gain, d = NA)
+    i <- 1
+    
+    if (xts::is.xts(v)) {
+      .dtref <- time(v)[.x]
     } else {
-      out <- data.frame(p = pct_gain, d = v[i, cl_nm["t"], drop = T])
+      .dtref <- v[[cl_nm["t"]]][.x]
     }
-    return(out)
+    if (verbose) print(.x)
+    .tsl <- tsl_amt(v, tsl = tsl, .dtref = .dtref, cl_nm = cl_nm)
+    while (i <= length(e$pi)) {
+      if (i == .x) {
+        .e <- ifelse((i + 1) <= length(e$pi), i + 1, length(e$pi))
+        # Determine the range prior to the first peak
+        .gap <- any(.l[.x:e$pi[.e]] <= e$peak[i] - .tsl)
+      } else if (i < length(e$pi)) {
+        .e <- ifelse((i + 1) <= length(e$pi), i + 1, length(e$pi))
+        # Determine the range between the present peak and the next peak
+        .gap <- any(.l[e$pi[i]:e$pi[.e]] <= e$peak[i] - .tsl)
+      } else if (i == length(e$pi)) {
+        .e <- .nrv
+        # Determine the range between the present peak and the next peak
+        .gap <- any(.l[e$pi[i]:.e] <= e$peak[i] - .tsl)
+      }
+      
+      # If the range exceeds the trailing stop loss
+      if (.gap) {
+        if (i == .x) {
+          .open <- .x
+          .close <- e$pi[.e]
+        } else if (i < length(e$pi)) {
+          .open <- e$pi[i]
+          .close <- e$pi[.e]
+        } else {
+          .open <- e$pi[i]
+          .close <- .e
+        }
+       .sp <- suppressWarnings(which(.l[.open:.close] <= (e$peak[i] - .tsl))[1] - 1)
+       if (is.na(.sp) || length(.sp) < 1) break
+       .sp <- ifelse(.open + .sp > .nrv, .nrv, .open + .sp)
+       browser(expr = verbose && .x %in% 44:47)
+       pct_gain <- ((e$peak[i] - .tsl) - .buy_price) / .buy_price
+       .out <- data.frame(pct_gain = pct_gain, d = v[[cl_nm["t"]]][.sp])
+       return(.out)
+      }
+      i <- i + 1  
+    }
+    pct_gain <- ((e$peak[length(e$peak)] - .tsl) - .buy_price) / .buy_price
+    .out <- data.frame(pct_gain = pct_gain, d = NA, row.names = NULL)
+    return(.out)
   })
   if (verbose) message(paste0(lubridate::now(), "fn TSL result: ", paste0(out, collapse = ", ")))
   return(out)
 }
 
+
+
+# # Set the starting point at the first low
+# .i <-  e$pi[i]
+# # Determine where the sale happens
+# 
+# while (.i <= .nrv) {
+#   # Check for the sale on each day between the two peaks 
+#   .s_l <- abs(purrr::map_dbl(unlist(.ohlc[.i,]), ~{diff(c(e$peak[i], .x))})) > .tsl
+#   if (any(.s_l)) {
+#     pct_gain <- ((e$peak[i] - .tsl) - .buy_price) / .buy_price
+#     .out <- data.frame(pct_gain = pct_gain, d = v[[cl_nm["t"]]][.open + .i])
+#     return(.out)
+#   }
+#   # if we reached the last peak, set the first low and li_max
+#   if (.open == 1) {
+#     # Re-create the vector of lows from the peak forward to circumvent lows prior to the peak influencing the threshold for lows after the peak
+#     e$li <- .ii <- e$pi[i]
+#     e$low <- .l[.ii]
+#     while (.ii <= length(.l)) {
+#       if (.l[.ii] < e$low[length(e$low)]) {
+#         e$low <- append(e$low, .l[.ii])
+#         e$li <- append(e$li, .ii)
+#       } 
+#       .ii <- .ii + 1
+#     }
+#     .open <- 2
+#     # get the first low
+#     .first_low <- try(suppressWarnings({e$li[min(which(e$li >= .i))]}), silent = TRUE)
+#     # if there isn't one return the gain if the TSL executes assuming no higher peaks
+#     if (inherits(.first_low, "try-error") || is.na(.first_low)) {
+#       pct_gain <- ((e$peak[i] - .tsl) - .buy_price) / .buy_price
+#       .out <- data.frame(pct_gain = pct_gain, d = v[[cl_nm["t"]]][.i])
+#       return(.out)
+#     } else {
+#       
+#       # if there are lows, get the index of the lowest low
+#       .li_max <- try(suppressWarnings({e$li[max(which(e$li >= .i))]}), silent = TRUE)
+#       e$li_max <- ifelse(inherits(.li_max, "try-error") || is.na(.li_max), e$li_max, .li_max)
+#     }
+#     # Otherwise set first low to the end of the timeseries to skip the conditional below and increment .i normally
+#   }
+#   # when the index is after the last peak, first_low has been allocated, and the index is below the last low index (the lowest low)
+#   
+#   if (.open > 1 && exists(".first_low", inherits = FALSE) && .i < e$li_max) {
+#     #increment .i to the new low (skipping all values that will not  cause the TSL to execute)
+#     .o <- .i
+#     .i <- try(suppressWarnings({e$li[min(which(e$li > .i))]}), silent = TRUE)
+#     .i <- ifelse(inherits(.i, "try-error") || is.na(.i), .o + 1, .i)
+#   } else {
+#     .i <- .i + 1
+#   }
+# }
