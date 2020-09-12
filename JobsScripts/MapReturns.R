@@ -1,53 +1,56 @@
-HDA::startPkgs(c("doParallel","magrittr","foreach"))
-load(file = "~/R/Quant/dat.Rdata")
-cl <- makePSOCKcluster(6, outfile = "~/R/Quant/dopar.log")
-doParallel::registerDoParallel(cl, cores = 6)
+
+`%>%` <- magrittr::`%>%`
+`!!!` <- rlang::`!!!`
+`!!` <- rlang::`!!`
+calling.script <- basename(purrr::keep(stringr::str_extract(commandArgs(trailingOnly = FALSE), "(?<=script\\s\\=\\s\\')[A-Za-z0-9\\/\\:\\.\\_]+"),~!is.na(.x)))
+message(paste0(calling.script, ": ", lubridate::now(),"\nlocation: ",getwd()))
+# Load New Data
+if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
+  message("Sourced from Local Job, loading dependencies")
+  load("~/R/Quant/data/input_mapret.Rdata")
+}
+source("~/R/Quant/JobsScripts/parameters.R")
+cl <- qf::start_cluster(outfile = TRUE)
+future::plan(future::cluster, workers = cl$cl)
 # # For Debugging
 #list(l = Positions_ts_rv$AMD, .x = .1, y = "tslret_px0.5_day7_rv") %>% list2env(envir = .GlobalEnv)
 # env <- new.env()
 # list(opts = .opts, att = "AMD") %>% list2env(envir = env)
 #ret <- purrr::pmap(list(l = dat, pct = purrr::map(1:length(dat), pct = pct, function(.x, pct){return(pct)}), opts = purrr::map(1:length(dat), .opts = .opts, function(.x, .opts){return(.opts)})), function(l, pct, opts)
-ret <- foreach(l = dat, pct = purrr::map(1:length(dat), pct = pct, function(.x, pct){return(pct)}), opts = purrr::map(1:length(dat), .opts = .opts, function(.x, .opts){return(.opts)}), .multicombine = T, .packages = c("magrittr"), .verbose = T, .errorhandling = 'stop') %dopar% {
-  source("JobsScripts/QuantFunctions_optimReturn.R")
-  att <- attr(l, "Sym")
-  message(paste0(lubridate::now(), " Begin:", att))
+ret <- furrr::future_imap(dat, ~cl$catch({
+#ret <- purrr::imap(dat, ~{
+  .d <- .x
+  .sym <- .y
+  message(paste0(lubridate::now(), ": Begin ", .sym))
   st  <- system.time({
-  returns.clms <- colnames(l)[stringr::str_which(colnames(l), "rv$")]
-  names(returns.clms) <- returns.clms
-  message(paste0("Returns Clms Created - mapping returns..."))
-  out <- purrr::map(returns.clms, env = sys.frame(sys.nframe()), function(.x, env){
-    out <- purrr::map(pct, y = .x, env = env, function(.x, y, env){
-      message(paste0("Begin -", env$att,": Pct:",.x," Clm: ",y))
-      out <- list()
-       test <- optimReturn(l, percent = .x, returns.clm = y, .opts = env$opts)
-       if (HDA::go("test")){
-       a <- test[[".opts"]] %>% purrr::compact() %>% dplyr::filter_all(.vars_predicate = dplyr::any_vars({. != 0})) %>%  purrr::imap(function(.x, .y) {
-         if (stringr::str_detect(.y, "bs")) out <- sum(.x[.x > 0], na.rm = T) else if (stringr::str_detect(.y, "gain")) out <- quantile(.x[.x != 0], na.rm = T)
-         return(out)
-       })
-       out$trades <- data.frame(rem = rep(0, a %>% purrr::keep(~ length(.) == 1) %>% length))
-       if (env$opts$bs.v) out$trades <- cbind(out$trades,bs.v = a %>% purrr::keep(~ length(.) == 1) %>% do.call("rbind",.))
-       if (env$opts$with.gains) out$trades <- cbind(out$trades, a %>% magrittr::extract(stringr::str_detect(names(a), "with")) %>% do.call("rbind",.) %>% as.data.frame%>% setNames(paste0(colnames(.),"w.g")))
-       if (env$opts$max.gain) out$trades <- cbind(out$trades, a %>% magrittr::extract(stringr::str_detect(names(a), "max")) %>% do.call("rbind",.) %>% as.data.frame %>% setNames(paste0(colnames(.),"max")))
-     out$trades <- out$trades[, colnames(out$trades) != "rem"]
-     out$returns <- test$returns
-     } else out <- NULL
-       message(paste0("End -", env$att,": Pct:",.x," Clm: ",y))
-       return(out)
-    })
-    
-    names(out) <- names(pct)
-    
-    return(out)
+    .tsls <- purrr::keep(stringr::str_extract(colnames(.d), ".*(?=\\_rv$)"), ~!is.na(.x)) %>% stats::setNames(nm = .)
+    #out <- furrr::future_map(.tsls, ~cl$catch({
+    out <- purrr::map(.tsls, ~{
+      .tsl <- .x
+      rv <- .d[[paste0(.x,"_rv")]]
+      ind <- .d[[paste0(.x, "_ind")]]
+      # get 10% of the time points with positive gains
+      .qt <- range(rv[rv > 0] %>% .[1:(length(.) %/% 10)]) %>%
+        # create ten even gaps for a total of 11 thresholds 
+        {seq(.[1], .[2], by = abs(diff(.)) / 10)} %>% 
+        setNames(nm = paste0("p",.))
+      qf::iMessage(paste0(lubridate::now(), ": Begin ", .sym,":",.tsl))
+      out <- purrr::map(.qt, ~{
+        .out <- qf::optimReturn(.d, tsl_name = .tsl, .p = .x)
+        return(.out)
+      })
+      message(paste0(lubridate::now(), ": End ", .sym,":",.tsl))
+      return(out)
+    }
+    #)
+    )
+    attr(out, "Sym") <- .sym
   })
-  attr(out, "Sym") <- att
-  message(paste0(lubridate::now()," End:", att))
-  })
-  message(paste0(lubridate::now()," End:", att," Elapsed:", lubridate::as.duration(st[[3]])))
+  message(paste0(lubridate::now()," End:", .sym," Elapsed:", lubridate::as.duration(st[[3]])))
   out
 }
-names(ret) <- purrr::map(dat, function(.x){
-  attr(.x,"Sym")
-}) %>% unlist
-parallel::stopCluster(cl)
+)
+)
+save(ret, file = "~/R/Quant/data/output_mapret.Rdata")
+parallel::stopCluster(cl$cl)
 

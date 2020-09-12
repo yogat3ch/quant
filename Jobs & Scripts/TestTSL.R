@@ -1,7 +1,0 @@
-load(file = "Positions_ts2014-05-08_2019-05-07.Rdata")
-HDA::startPkgs("magrittr")
-source("Jobs & Scripts/QuantFunctions_TSL.R")
-test <- list()
-test$retro <- Positions_ts$GOOG %>% quantmod::OHLC() %>% TSL(retro = c(n = 7, hilop = .9))
-test$tsla <- Positions_ts$GOOG %>% quantmod::OHLC() %>% TSL(tsla = 40)
-test$tslp <- Positions_ts$GOOG %>% quantmod::OHLC() %>% TSL(tslp = .15)

@@ -26,12 +26,13 @@ set.seed(1)
 # Load packages
 
 source("~/R/Quant/JobsScripts/parameters.R")
-HDA::startPkgs(c("dplyr","magrittr","printr", "AlpacaforR"))
+HDA::startPkgs(c("dplyr","magrittr","printr", "AlpacaforR", "qf"))
+purrr::walk(list.files("db", full.names = T, pattern = "\\.db$"), ~{file.copy(qf::wd(.x), qf::wd(fs::path("db", "backup", basename(.x))), overwrite = TRUE)})
 # # Attach dependencies
 # rmarkdown::html_dependency_jquery()
 # rmarkdown::html_dependency_bootstrap("spacelab")
 # rmarkdown::html_dependency_jqueryui()
-# # Use Chunk Titles to add Bold Headings to Chunks
+# # Use Chunk Titles to add Bold Headi1ngs to Chunks
 # source("~/R/Scripts/addChunkTitles.R")
 # rmd <- addChunkTitles(rstudioapi::getSourceEditorContext()$path)
 # write(rmd,file=(rstudioapi::getSourceEditorContext()$path))
@@ -44,10 +45,11 @@ HDA::startPkgs(c("dplyr","magrittr","printr", "AlpacaforR"))
 
 ```{r 'Get Positions', eval = F}
 .token <- gargle::oauth_app_from_json("~/R/google_oauth.json")
-googlesheets4::sheets_auth("sholsen@alumni.emory.edu", token = .token)
-Positions <- googlesheets4::sheets_read("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0", sheet = "Personal")
+googlesheets4::gs4_auth("sholsen@alumni.emory.edu", token = .token)
+Positions <- googlesheets4::range_read("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0", sheet = "Personal")
 (Positions_v <- Positions[-c(1, 2), 1, drop = T])
 ```
+
 
 ```{r 'Get Positions Quick'}
 wl <- watchlist("Primary")
@@ -56,18 +58,42 @@ Positions_v <- wl$symbol %>% setNames(nm = .)
 
 ```{r, 'Retrieve RV lagged data', eval = F}
 # for RVs to be computed properly, the data must start from the maximum duration  RV windows prior.
-market_data_rvs <- function(ticker, multiplier = 1, timeframe = "day", from = NULL, to = NULL, full = TRUE, max.duration = lubridate::weeks(4)) {
+market_data_rvs <- function(ticker, multiplier = 1, timeframe = "day", from = NULL, to = NULL, full = TRUE, max.duration = 200 / 5 * lubridate::weeks(1)) {
   from <- AlpacaforR:::try_date(from)
   from <- from - (max.duration + lubridate::days(1))
   dat <- market_data(ticker, v = 2, multiplier = multiplier, timeframe = timeframe, from = from, to = to, full = full)
 }
-lagdat <- market_data_rvs(Positions_v, timeframe = "h", from = "2020-03-01", to = head(dat[[1]]$time, 1), full = TRUE)
-
+# Get lagged data
+lagdat <- market_data_rvs(Positions_v, timeframe = "h", from = "2020-03-01", to = dat_hr[[1]]$time[1], full = TRUE)
+# fix LVGO
+lagdat$LVGO <- AlpacaforR::market_data("LVGO", v = 2, timeframe = "h", from = lubridate::mdy("07/26/2019"), full = T)[[1]]
+#impute missing
+lagdat <- purrr::map(lagdat, ~{
+  if (inherits(.x, "data.frame")) {
+    .out <- mice::complete(mice::mice(as.data.frame(.x), m = 1, threshold = 1, method = c("midastouch", "cart", rep("rf", 4), "", "rf")))
+  }
+      
+  })
+dat_hr <- purrr::pmap(list(lagdat, dat_hr, names(lagdat)), ~{
+  .ti <-params$time_index(.x)
+  .out <- dplyr::distinct_at(dplyr::bind_rows(
+  tibble::as_tibble(.x),
+  tibble::as_tibble(.y)
+), .ti, .keep_all = TRUE)
+  .in <- dplyr::filter(.out, time != .y[[.ti]])
+  if (nrow(.in) > 0) {
+    RSQLite::dbWriteTable(db, ..3, .in, append = TRUE)
+  }
+  .ti <- rlang::sym(.ti)
+  .out <- tsibble::as_tsibble(dplyr::filter(.out, lubridate::hour(!!.ti) >= 10 & lubridate::hour(!!.ti) < 17), index = !!.ti, regular = FALSE)
+  attr(.out, "Sym") <- ..3
+  .out
+})
 ```
 
 
 ```{r, 'Write data to db', eval = F}
-db <- RSQLite::dbConnect(RSQLite::SQLite(), "db/HourlyData.db")
+db <- RSQLite::dbConnect(RSQLite::SQLite(), "db/hours.db")
 purrr::iwalk(dat, ~{
   RSQLite::dbWriteTable(db, paste0(.y), .x, overwrite = T)
 })
@@ -75,124 +101,269 @@ RSQLite::dbListTables(db)
 RSQLite::dbDisconnect(db)
 ```
 
+## Retrieve Data from DB
+```{r 'Set Training dates'}
+.date <- list(
+  begin = lubridate::ymd_hm("2020-03-01 09:00", tz = "America/New_York"),
+  end = lubridate::ymd_hm("2020-08-10 16:00", tz = "America/New_York")
+)
+```
+
 ```{r 'Retrieve daily data from db'}
-db <- RSQLite::dbConnect(RSQLite::SQLite(), "db/Daily.db")
-wt <- purrr::imap(pos, ~{
-  RSQLite::dbWriteTable(db, paste0(.y), .x)
-})
-RSQLite::dbListTables(db)
-RSQLite::dbDisconnect(db)
-db <- RSQLite::dbConnect(RSQLite::SQLite(), dbname = "db/Daily.db")
-dat <- purrr::imap(pos, ~{
-  RSQLite::dbReadTable(db, .y) %>% 
-    dplyr::mutate_at(dplyr::vars(time),lubridate::as_datetime, tz = "America/New_York")
-})
+dat_da <- get_data$raw("days")
 ```
 
 ```{r 'Retrieve hourly data from db'}
-db <- RSQLite::dbConnect(RSQLite::SQLite(), dbname = "db/HourlyData.db")
-Positions_v <- RSQLite::dbListTables(db) %>% stringr::str_subset("_", negate = TRUE) %>%  setNames(., .)
-dat <- purrr::map(Positions_v, ~{
-  .out <- RSQLite::dbReadTable(db, .x) %>% 
-    dplyr::mutate_at(dplyr::vars(time),lubridate::as_datetime, tz = "America/New_York")
-  .ti <- rlang::sym(params$time_index(.out))
-  browser(expr = any(duplicated(.out$time)))
-  .out <- tsibble::as_tsibble(dplyr::filter(.out, lubridate::hour(!!.ti) >= 10 & lubridate::hour(!!.ti) < 17), index = !!.ti, regular = FALSE)
-  attr(.out, "Sym") <- .x
-  .out
-})
+dat_hr <- get_data("raw")
+```
+
+```{r 'Update DB Data'}
+dat_hr <- qf::get_data("update")
 
 ```
 
-
-```{r 'Update Data'}
-
-newdat <- AlpacaforR::market_data(names(dat), v = 2, timeframe = "h", from = tail(dat$AMZN$time, 1), to = lubridate::today(), full = T)
-`!!` <- rlang::`!!`
-dat <- purrr::map2(dat, newdat, ~{
-  .sym <- attr(.x, "Sym")
-  .ti <- rlang::sym(params$time_index(.x))
-  .out <- dplyr::distinct(dplyr::bind_rows(
-  tibble::as_tibble(.x),
-  tibble::as_tibble(.y)
-), !!.ti, .keep_all = TRUE)
-  .in <- dplyr::filter(.out, time != .x$time)
-  if (nrow(.in) > 0) {
-    RSQLite::dbWriteTable(db, .sym, .in, append = TRUE)
+```{r 'Hourly_impute missing', eval = F}
+purrr::walk(Positions_v,~{
+  .out <- RSQLite::dbReadTable(db, .x)
+  if (any(purrr::map_lgl(.out, ~any(is.na(.x))))) {
+    message(.x)
+    .out <- mice::complete(mice::mice(.out, m = 1, threshold = 1, method = c("midastouch", "cart", rep("rf", 4), "", "rf")))
+     RSQLite::dbWriteTable(db, .x, as.data.frame(.out), overwrite = T)
   }
-  .out <- tsibble::as_tsibble(dplyr::filter(.out, lubridate::hour(!!.ti) >= 10 & lubridate::hour(!!.ti) < 17), index = !!.ti, regular = FALSE)
-  attr(.out, "Sym") <- .sym
-  .out
 })
-lubridate::today()
 ```
 
+## Add Variables
 
+```{r 'Join Hourly Data and RVs'}
+dat_rv <- get_data("rv")
+```
+```{r, "Read/Write/Remove RVs", eval = F}
+purrr::walk(Positions_v,~{
+  #.out <- RSQLite::dbReadTable(db, paste0(.x, "3_rv"))
+  #RSQLite::dbRemoveTable(db, paste0(.x, "2_rv"))
+  #RSQLite::dbRemoveTable(db, paste0(.x, "3_rv"))
+  #RSQLite::dbWriteTable(db, paste0(.x, "_rv"), as.data.frame(.out), overwrite = T)
+})
+```
+
+### Response Variables: Trailing Stop Tuning
 ```{r 'Add RVs to Data'}
-# Set the signal windows desired in parameters.r
+# Determine the first index for which a sell point did not compute
+.start_ind <- purrr::map(dat_rv, ~{
+  .d <- .x
+  .d[[qf::time_index(.d)]][purrr::map_dbl(.d[stringr::str_detect(names(.d), "_ind")], ~min(which(is.na(.x)))) %>% 
+    min]
+  
+})
+# filter for the first index for which a sell point did not compute
+dat <- purrr::map2(dat_hr, .start_ind, ~{
+  dplyr::filter(.x, !!rlang::sym(qf::time_index(.x)) >= .y)
+})
 .add <- F
-.dbname <- "~/R/Quant/db/HourlyData.db"
-dat <- .d
-dat <- dat[10]
-save(dat, .add, .dbname, file = "~/R/Quant/dat.Rdata")
+save(dat, .add, file = "data/input_rv.Rdata")
 rstudioapi::jobRunScript("~/R/Quant/JobsScripts/AddRVstoData.R", exportEnv = "R_GlobalEnv", importEnv = F)
 # Save
 ```
 
-```{r 'addTK'}
-addTK <- function(.x) {
-  .tr_p <- recipes::recipe(.x) %>%
-    recipes::update_role(tidyselect::everything(), new_role = "predictor") %>% 
-    recipes::update_role(tidyselect::ends_with("rv"), new_role = "outcome") %>% 
-    timetk::step_timeseries_signature(time)  %>% 
-    recipes::step_rm(time) %>% 
-    recipes::step_rm(tidyselect::contains("iso"),
-                     tidyselect::contains("second"),tidyselect::contains("minute"),tidyselect::contains("hour"),
-                     tidyselect::contains("am.pm"),tidyselect::contains("xts")) %>% 
-    recipes::step_normalize(tidyselect::contains("index.num"), time_year) %>% 
-    recipes::step_interact(~ time_month.lbl * time_day) %>% 
-    recipes::step_interact(~ time_month.lbl * time_mweek) %>% 
-    recipes::step_interact(~ time_month.lbl * time_wday.lbl * time_yday) %>% 
-    recipes::step_dummy(tidyselect::contains("lbl"), one_hot = T)
-  .tr_bake <- recipes::bake(recipes::prep(.tr_p), new_data = .x)
-  return(.tr_bake)
-}
-```
-```{r 'Add IVs'}
-.test <- purrr::map(dat, addTK)
+```{r 'Retrieve RV Data'}
+dat_rv <- qf::get_data("rv")
 ```
 
 
+### Response Variables: Calculating Returns
+```{r 'Map Returns', eval = F}
+dat <- dat_rv %>% purrr::map( ~{dplyr::filter(.x, time > .date$begin & time <= .date$end)})
 
+save(dat, file = "data/input_mapret.Rdata")
+rstudioapi::jobRunScript(path = "JobsScripts/MapReturns.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
+```
+```{r 'Process MapReturns', eval = F}
+load(file = "data/output_mapret.Rdata")
+ret.p <- purrr::map_depth(ret, 3, dplyr::bind_rows)
+ret.p <- purrr::map_depth(ret.p, 2, dplyr::bind_rows, .id = "p")
+ret.p <- purrr::map_depth(ret.p, 2, ~{
+  .x %>%
+    dplyr::mutate_at("p", ~as.numeric(stringr::str_extract(.,"[\\d\\.]+"))) %>% 
+    dplyr::arrange(pct_returns_c) %>% 
+    dplyr::mutate(rank = dplyr::percent_rank(pct_returns_c)) %>% 
+    dplyr::filter(rank > .9)
+})
+rm(ret)
+```
+```{r 'Determine best TSL', eval = F}
 
-```{r 'Create Test and Train Data'}
-(.cutoff_date <- lubridate::floor_date(lubridate::today(), unit = "week"))
-(oot_g <- purrr::imap(dat, ~{
-  .max <- .x %>% {max(purrr::map_dbl(.[c("open", "high", "low", "close")], max)) + 10}
-  .x %>% 
-    ggplot(aes(x = time, y = close)) +
-    geom_barchart(aes(open = open, high = high, low = low, close = close)) +
-    labs(title = paste0(.y, " Bar Chart"), 
-         y = "Closing Price", x = "") + 
-    geom_rect(xmin = .cutoff_date,
-              xmax = max(.[["time"]]),
-              ymin = 0, ymax = .max,
-              fill = palette_light()[[4]], alpha = 0.01) +
-    theme_tq()
-}))
+ret.t <- purrr::map(ret.p, ~{
+  .dfs <- purrr::map(.x, ~{
+    names(.x)[grepl("rv$", names(.x))] <- "rv"
+    names(.x)[grepl("ind$", names(.x))] <- "ind"
+    .x
+  })
+  bind_rows(.dfs, .id = "tsl")
+})
+ret.table <- purrr::imap(ret.t, ~{
+  .x %>%
+    dplyr::group_by(tsl, p) %>%
+    dplyr::summarise(pct_returns_cavg = mean(pct_returns_c, na.rm = T),
+                     pct_returns_maxavg = mean(pct_return_max, na.rm = T),
+                     freq = dplyr::n() / nrow(.),
+                     .groups = "keep") %>% 
+    dplyr::arrange(dplyr::desc(pct_returns_cavg)) %>% 
+    dplyr::ungroup() %>%
+    dplyr::mutate(Rpct_returns_cavg = dplyr::percent_rank(pct_returns_cavg) * 1.03,
+                Rfreq = dplyr::percent_rank(freq) * 1.01,
+                Rp = dplyr::percent_rank(p)) %>% 
+    dplyr::rowwise() %>% 
+    dplyr::mutate(CombinedRank = mean(c(Rpct_returns_cavg, Rfreq, Rp))) %>%
+    dplyr::arrange(dplyr::desc(CombinedRank)) %>% 
+    dplyr::select(- dplyr::starts_with("R")) %>% 
+    head(1)
+  })
+rm(ret.t)
+best_tsl <- dplyr::bind_rows(ret.table, .id = "symbol")
+rm(ret.table)
+db <- RSQLite::dbConnect(RSQLite::SQLite(), dbname = "db/hours.db")
+RSQLite::dbWriteTable(db, "best_tsl", best_tsl, overwrite = TRUE)
+RSQLite::dbDisconnect(db)
+```
+```{r 'Process TSL Percent Thresholds', eval = F}
+tsl_pct <- tibble::rownames_to_column(purrr::imap_dfc(purrr::map_depth(ret.p, 2, ~table(.x$p) %>% {as.numeric(names(.[which.max(.)]))}), ~{
+  .x <- purrr::map_if(.x, ~length(.x) == 0, ~NA)
+  setNames(as.data.frame(unlist(.x)), .y)
+  }))
+db <- RSQLite::dbConnect(RSQLite::SQLite(), dbname = "db/hours.db")
+RSQLite::dbWriteTable(db, "tsl_pct", tsl_pct, overwrite = TRUE)
+RSQLite::dbDisconnect(db)
 ```
 
+## Independent Variables
 
-```{r 'start model training pkgs'}
-HDA::startPkgs(c("workflows", "parsnip", "recipes", "yardstick", "tune", "glmnet", "tidyverse", "tidyquant", "timetk"))
+```{r "oot dates"}
+.oot <- list(
+  begin = lubridate::ymd_hm("2020-03-01 09:00", tz = "America/New_York"),
+  end = lubridate::ymd_hm("2020-06-25 16:00", tz = "America/New_York")
+)
 ```
 
 ```{r 'Feature Addition'}
-dat <- Positions_ts
-# Set the signal windows desired in parameters.r
-source("~/R/Quant/JobsScripts/parameters.R")
-add <- F
-save(dat, TSLvars, add, file = "~/R/Quant/dat.Rdata")
-rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+.ti <- qf::time_index(dat_hr[[1]])
+.tis <- rlang::sym(.ti)
+dat <- dat_hr %>% purrr::map(~{
+  .d <- dplyr::filter(.x, !!.tis < .oot$end)
+  .fd <-  .d %>% 
+    qf::time_index(name = F) %>% 
+    {base::findInterval(.oot$begin, .)} %>% 
+    magrittr::subtract(200)
+  .d[.fd:nrow(.d),]
+})
+save(dat, file = "~/R/Quant/data/input_AddIVstoData.Rdata")
+rstudioapi::jobRunScript("~/R/Quant/JobsScripts/AddIVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
+```
+
+```{r 'Retrieve Data with IVs'}
+dat_iv <- get_data("iv")
+```
+
+
+# Modeling
+### Retrieve Data
+```{r 'Pull Complete Dataset from DB'}
+dat_full <- get_data("full")
+```
+
+## Hyperparameter Tuning
+```{r 'Tune Hyperparameters'}
+dat <- dat_full
+.replace = T
+save(dat, .replace, file = "~/R/Quant/data/input_TuneHP.Rdata")
+rstudioapi::jobRunScript("~/R/Quant/JobsScripts/TuneHP.R", exportEnv = "R_GlobalEnv", importEnv = F)
+```
+
+### Retrieve the best tuning parameters
+```{r 'Extract Best Tuning Params'}
+db <- RSQLite::dbConnect(RSQLite::SQLite(), dbname = "db/hours.db")
+.db_tbls <- RSQLite::dbListTables(db)
+.mod_syms <- na.exclude(stringr::str_subset(.db_tbls, "tune$")) %>% 
+  stringr::str_extract("^[A-Z]+") %>% 
+  unique %>% 
+  setNames(nm = .)
+# get the tuning parameters
+.tunes <- purrr::map(.mod_syms, ~{
+  .sym <- .x
+  .tunes <- na.exclude(stringr::str_subset(stringr::str_subset(.db_tbls, "tune$"), .x))
+  names(.tunes) <- stringr::str_extract(.tunes, "[a-z]+(?=\\.tune$)")
+  purrr::imap(.tunes, ~{
+    .tune <- RSQLite::dbReadTable(db, .x)
+    # get the msd table for converting RMSE values
+    .msd <- RSQLite::dbReadTable(db, glue::glue("{.sym}_msd"))
+    #assuming one RV is present, retrieve it's standard deviation
+    .sd <- .msd[stringr::str_which(.msd$nm, "rv$"), "sd", drop = TRUE]
+    .tune <- .tune %>%
+      dplyr::mutate_at(dplyr::vars(mean, std_err), ~ . * .sd) %>% 
+      dplyr::mutate_at(dplyr::vars(time), lubridate::as_datetime, tz = "America/New_York") %>%
+      dplyr::arrange(mean) %>% 
+      head(3)
+  })
+})
+# bind the parameters to the datasets
+dat_trained <- purrr::map2(dat_full[names(.mod_syms)], .tunes, ~{
+  .d <- .x
+  .tune <- purrr::map(.y, ~{
+    .x[,1:(which(names(.x) %in% ".metric") - 1)]
+  })
+  data.table::setattr(.d, "tune", .tune)
+})
+RSQLite::dbDisconnect(db)
+```
+
+## Testing on Out-of-time (OOT) data
+
+```{r 'Create OOT Data'}
+# TODO update db first
+dat_4_oot <- purrr::pmap(list(dat_trained, dat_full[names(dat_trained)], names(dat_trained)), ~{
+  .tid <- params$time_index(.x)
+  # determine the amount of tail
+  .tail <- nrow(.y) - which(.y[[.tid]] %in% tail(.x[[.tid]], 1)) + 200
+  tail(.y, .tail) %>% 
+    data.table::setattr("Sym", ..3)
+  
+})
+
+# TODO Build new RVs and IVs
+
+.tid <- params$time_index(dat_full[[1]])
+dat_oot <- purrr::pmap(list(dat_full[.mod_syms], .mod_syms, dat_trained), ~{
+  .d <- .x
+  .sym <- .y
+  .tune <- attr(..3, "tune")
+  .out = list(
+    train = dplyr::filter(.x, !!rlang::sym(.tid) <= .oot$end & !!rlang::sym(.tid) >= .oot$begin),
+    test = dplyr::filter(.x, !!rlang::sym(.tid) > .oot$end)
+  )
+  .out <- purrr::map(.out, ~{
+    .x %>%
+      data.table::setattr("tsl", attr(.d, "tsl")) %>% 
+      data.table::setattr("Sym", .sym) %>% 
+      data.table::setattr("tune", .tune)
+  })
+})
+```
+
+### Final Models, Predictions and Performance
+```{r 'Make final models from tuned hp, predict and assess performance'}
+save(dat_oot, file = "data/input_FitTunedHP.Rdata")
+rstudioapi::jobRunScript("~/R/Quant/JobsScripts/FitTunedHP.R", exportEnv = "R_GlobalEnv", importEnv = F)
+```
+
+```{r 'Probabilities and Performance'}
+.perf <- purrr::map_depth(preds, 3, ~{
+    out <- list(
+    prob = sum(purrr::map_dbl(.x$performance$returns, ~{
+      tail(.x, 1)$pct_returns_c
+      }) > .x$performance$buy_hold) / length(.x$performance$returns),
+    prof = mean(purrr::map_dbl(.x$performance$returns, ~{tail(.x, 1)$pct_returns_c})) - .x$performance$buy_hold
+    )
+    
+})
 ```
 
