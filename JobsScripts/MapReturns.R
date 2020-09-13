@@ -30,7 +30,9 @@ ret <- furrr::future_imap(dat, ~cl$catch({
       rv <- .d[[paste0(.x,"_rv")]]
       ind <- .d[[paste0(.x, "_ind")]]
       # get 10% of the time points with positive gains
-      .qt <- range(rv[rv > 0] %>% .[1:(length(.) %/% 10)]) %>%
+      .rp <- range(rv[rv > 0] %>% .[1:(length(.) %/% 10)])
+      if (length(.rp) == 0) return(NULL)
+      .qt <- .rp %>%
         # create ten even gaps for a total of 11 thresholds 
         {seq(.[1], .[2], by = abs(diff(.)) / 10)} %>% 
         setNames(nm = paste0("p",.))
