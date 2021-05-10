@@ -13,9 +13,9 @@ addIVstoNewData <- function(dat) {
   .sma <- qf::add_indicator(dat, sma.wind, TTR::SMA, bc = F, .na = "o")
   .ema <- qf::add_indicator(dat, sma.wind, TTR::EMA, bc = F, .na = "o", wilder = T)
   # Use only non-NA data
-  dat_final$ma <- dplyr::bind_cols(tail(dat, min(purrr::map_dbl(list(.ema,.sma), nrow))), .sma, .ema)
+  dat_final$ma <- dplyr::bind_cols(utils::tail(dat, min(purrr::map_dbl(list(.ema,.sma), nrow))), .sma, .ema)
   qf::iMessage(paste0(.sym, ": Cross Averages"))
-  dat_final$ma <- cross_ma(dat_final$ma, sma.wind, params$IV$cross)
+  dat_final$ma <- qf::cross_ma(dat_final$ma, sma.wind, params$IV$cross)
   
   qf::iMessage(paste0(.sym, ": Ultimate Oscillater"))
   .uo <- qf::add_indicator(dat, list(day.mp = wind[1] * c(1, 2, 4), week.mc = wind[2] * c(1, 2, 4)), TTR::ultimateOscillator, .na = "o") %>% {stats::setNames(., stringr::str_replace(names(.), "ultimateOscillator", "UO"))}
@@ -28,7 +28,7 @@ addIVstoNewData <- function(dat) {
     } else {
       .m <- round(.x * 2.5)
     }
-    tail(dat_final$ma, .m)
+    utils::tail(dat_final$ma, .m)
   })
   
   qf::iMessage(paste0(.sym, ": ADX & ADXi"))
@@ -81,7 +81,7 @@ addIVstoNewData <- function(dat) {
       .wi <- which(names(sma.wind) %in% .y) + 2
       .wi <- ifelse(.wi > length(sma.wind), length(sma.wind), .wi)
       .sma_nm <- grep(paste0("SMA_", names(sma.wind[.wi]),"$"), names(.d), ignore.case = TRUE, value = TRUE)
-      .macd <- dplyr::bind_cols(.out, tail(.d[,c(.sma_nm, qf::ohlcvt(.d)[4])], nrow(.out)))
+      .macd <- dplyr::bind_cols(.out, utils::tail(.d[,c(.sma_nm, qf::ohlcvt(.d)[4])], nrow(.out)))
       macd <- qf::macc(.macd, .x, .args = params$IV$macd)
       return(macd)
     })
@@ -99,9 +99,9 @@ addIVstoNewData <- function(dat) {
   dat_final %>% purrr::map(~{
     .x <- .x[!names(.x) %in% c(qf::ohlcvt(.x), "vw", "n")]
     if (inherits(.x, "list")) {
-      .out <- dplyr::bind_cols(tail(.x, 1))
+      .out <- dplyr::bind_cols(utils::tail(.x, 1))
     } else {
-      .out <- tail(.x, 1)
+      .out <- utils::tail(.x, 1)
     }
     browser()
     .out

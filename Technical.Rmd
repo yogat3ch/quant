@@ -16,7 +16,7 @@ output:
     toc_float: true
 ---
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message=T,warning=FALSE,cache=TRUE, fig.align='center', fig.height=3.5, fig.width=5, tidy=TRUE, tidy.opts=list(width.cutoff=80))
+knitr::opts_chunk$set(echo = TRUE, message = T,warning=FALSE,cache=TRUE, fig.align='center', fig.height=3.5, fig.width=5, tidy=TRUE, tidy.opts=list(width.cutoff=80))
 # rmarkdown::html_dependency_jquery()
 # rmarkdown::html_dependency_bootstrap("spacelab")
 # rmarkdown::html_dependency_jqueryui()
@@ -63,15 +63,16 @@ TODO - 2019-05-30 1903
 # Create Neural net signal tracker
 # ----------------------- Mon Aug 06 16:36:13 2018 ------------------------#
 # Load my personal portfolio and watch list
-googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
-gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
-Positions <- googlesheets::gs_read(gsPositions,ws=1)
+
+.token <- gargle::oauth_app_from_json("~/R/google_oauth.json")
+googlesheets4::sheets_auth("sholsen@alumni.emory.edu", token = .token)
+Positions <- googlesheets4::sheets_read("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0", sheet = "Personal")
 # ----------------------- Tue Jun 26 13:52:59 2018 ------------------------#
 # Import Dad's portfolio
 #Dad.positions <- googlesheets::gs_read(gsPositions,ws=2)
 ```
-```{r 'Clean Data for IEX Requests'}
-Positions_v <- Positions[-c(1,2),1,drop=T] # Call for vector of positions
+```{r 'Get Symbols'}
+(Positions_v <- Positions[-c(1, 2), 1, drop = T])
 #Dad.positions_v <- Dad.positions[-c(1),1,drop=T]
 ```
 
@@ -106,10 +107,10 @@ iex_fields <- tibble::tribble(
 
 library("rvest")
 iex_responses <- list()
-iex_responses$stats <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[18]"))
-iex_responses$quote <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[27]"))
-iex_responses$earnings <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[11]"))
-iex_responses$financials <- html_table(read_html("https://iextrading.com/developer/docs/#key-stats") %>% html_node(xpath = "/html/body/div[2]/div[2]/table[13]"))
+iex_responses$stats <- rvest::html_table(xml2::read_html("https://iextrading.com/developer/docs/#key-stats") %>% rvest::html_node(xpath = "/html/body/div[2]/div[2]/table[18]"))
+iex_responses$quote <- rvest::html_table(xml2::read_html("https://iextrading.com/developer/docs/#key-stats") %>% rvest::html_node(xpath = "/html/body/div[2]/div[2]/table[27]"))
+iex_responses$earnings <- rvest::html_table(xml2::read_html("https://iextrading.com/developer/docs/#key-stats") %>% rvest::html_node(xpath = "/html/body/div[2]/div[2]/table[11]"))
+iex_responses$financials <- rvest::html_table(xml2::read_html("https://iextrading.com/developer/docs/#key-stats") %>% rvest::html_node(xpath = "/html/body/div[2]/div[2]/table[13]"))
 ```
 
 ```{r 'Financial Stats'}
@@ -122,103 +123,60 @@ fin_stats <- cbind(quotes,stats)
 
 ```
 
-```{r 'Batch Symbol Timeseries Data Request'}
+```{r 'Batch Symbol Timeseries Data Request', fig.dim=c(8,12)}
 #Positions_ts <- lapply(Positions_v, function(x)Riex::iex.chart(x, "5y", iex_sk = keyring::key_get("IEX")))
 Positions_ts <- iex_batch_req(tSymbols = Positions_v, range = "5y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T])
 #Dad.positions_ts <- iex_batch_req(tSymbols = Dad.positions_v, range = "1y", filter = iex_fields[c(1:3,6:8,10:11),1,drop=T]) 
+dat$WORK %>% dplyr::mutate_at(dplyr::vars(time), ~ lubridate::as_date(.)) %>% dplyr::mutate(Q = lubridate::quarter(time, with_year = T)) %>% dplyr::group_by(Q) %>% dplyr::summarize(high = mean(high)) %>%   ggplot2::ggplot( ggplot2::aes(time, high)) + ggplot2::geom_bar(stat = "identity", color = "steelblue3") + ggplot2::scale_x_date(date_breaks = "3 months", date_labels = "%m/%y")+ggplot2::ylab("High")
+
+data001 %>%
+  dplyr::mutate(Q = lubridate::quarter(date001, with_year = T)) %>% # Add a column with the quarter
+  dplyr::group_by(Q) %>% # group by that column
+  dplyr::summarize(Antibiotic_by_Q = mean(Antibiotic.Total)) %>% # summarize by quarter by taking the mean
+  ggplot2::ggplot(ggplot2::aes(Q, Antibiotic_by_Q)) + ggplot2::geom_bar(stat = "identity", fill = "steelblue3") + ggplot2::ylab("Antibiotic Total (Grams)") # Graph by the new variables, x is no longer a date so remove it
 ```
 ```{r 'Update Data from Alpaca'}
 get_positions <- function (ticker = NULL, live = FALSE) 
 {
-  url = get_url(live)
-  headers = get_headers(live)
+  url = AlpacaforR::get_url(live)
+  headers = AlpacaforR::get_headers(live)
   positions = httr::GET(url = paste0(url, "/v1/positions"), 
     headers)
-  positions = response_text_clean(positions)
+  positions = AlpacaforR::response_text_clean(positions)
   if (length(positions) == 0) 
     cat("No positions are open at this time.")
   else if (is.null(ticker)) {
-    positions[, c(5:6, 8:ncol(positions))] %<>% map_dfc(as.numeric)
+    positions[, c(5:6, 8:ncol(positions))] %<>% purrr::map_dfc(as.numeric)
     return(positions)
   }
   else {
-    positions[, c(5:6, 8:ncol(positions))] %<>% map_dfc(as.numeric)
+    positions[, c(5:6, 8:ncol(positions))] %<>% purrr::map_dfc(as.numeric)
     positions <- subset(positions, symbol == ticker)
     return(positions)
   }
 }
 ticker <- r$symbol
-get_bars <- function(ticker, from = Sys.Date() - 6, to = Sys.Date(), timeframe = "minute", 
-  limit = NULL) 
-{
 
-  if (stringr::str_detect(timeframe, stringr::regex("D|d|days?", ignore_case = T))) {
-    timeframe <- "1D"
-  } else if (stringr::str_detect(timeframe, stringr::regex("M|mins?|minutes?", ignore_case = T))) {
-    digit <- ifelse(!is.na(stringr::str_extract(timeframe, "^\\d+")), stringr::str_extract(timeframe, "^\\d+"), "1")
-    timeframe <- paste0(digit,"Min")
-  }
-  url = "https://data.alpaca.markets"
-  headers = AlpacaforR::get_headers()
-  if (!is.null(limit)) {
-    if (limit > 1000) {
-      stop("Max limit is 1000!")
-    }
-  }
-  ticker = ifelse(length(ticker) > 1, paste0(ticker, collapse = ","), 
-    ticker)
-  week_dates = AlpacaforR::get_calendar(from, to)$date
-  if (length(week_dates) > 1000) {
-    start <- length(week_dates) - 999
-    week_dates <- week_dates[start:length(week_dates)]
-  }
-  if ((timeframe == "1D" | timeframe == "day") & is.null(limit)) {
-    limit = length(week_dates)
-  } else if (timeframe == "15Min" & is.null(limit)) {
-    limit = 250
-  } else if (timeframe == "5Min" & is.null(limit)) {
-    limit = 500
-  } else if ((timeframe == "1Min" | timeframe == "minute") & is.null(limit)) {
-    limit = 1000
-  }
-  if (!(timeframe == "1D" | timeframe == "day")) {
-    from = paste0(from, stringr::str_extract(format(Sys.time(), 
-      "%Y-%m-%dT%H:%M:%OS%z"), "T.*"))
-    to = paste0(to, stringr::str_extract(format(Sys.time(), 
-      "%Y-%m-%dT%H:%M:%OS%z"), "T.*"))
-  } else {
-    from = paste0(from, "T20:30:00-04:00")
-    to = paste0(to, "T20:30:00-04:00")
-  }
-  bars = httr::GET(url = paste0(url, "/v1/bars/", timeframe, 
-    "?symbols=", ticker, "&limit=", limit, "&start=", from, 
-    "&end=", to), headers)
-  bars = AlpacaforR::response_text_clean(bars)
-  bars = lapply(bars, function(l){
-    nms <- c(time = "t", open = "o", high = "h", low = "l", close = "c", volume = "v")
-    out <- dplyr::mutate_at(l, dplyr::vars("t"), ~as.POSIXct(.,origin = "1970-01-01")) %>% dplyr::mutate_at(dplyr::vars(o,h,c,l,v),~as.numeric(.)) %>%
-      dplyr::rename((!!nms))
-  })
-  return(bars)
-}
-Positions_ts <- get_bars(Positions_v, from = lubridate::today() - lubridate::years(4))
-
+Positions_ts <- AlpacaforR::get_bars(Positions_v, from = lubridate::today() - lubridate::weeks(4), timeframe = "5m")
+Positions_ts %<>% purrr::compact() 
 ```
 ```{r 'Add Additional data for IVs'}
 source("JobsScripts/parameters.R")
 # ----------------------- Fri Jul 19 09:36:31 2019 ------------------------#
 #Add Additional data to account for NA on indicators
-if (xts::is.xts(Positions_ts$GOOG)) {
-   earliest.date <- min(time(Positions_ts$GOOG))
- } else {
-   td_nm <- stringr::str_extract(names(Positions_ts$GOOG), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
-   earliest.date <- min(Positions_ts$GOOG[[td_nm]])
- }
+purrr::map(Positions_ts,~{
+  if (xts::is.xts(.x)) {
+     earliest.date <- min(stats::time(.x))
+  } else {
+     td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
+     earliest.date <- min(.x[[td_nm]])
+  }
+})
 Positions_ext <- purrr::imap(Positions_ts, ed = earliest.date, wind = params$wind, function(.x, .y, ed, wind){
   td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
   if (xts::is.xts(.x)) {
-   to <- min(time(.x)) - lubridate::days(1)
-   from <- min(time(.x)) - {wind[[4]] * 4}
+   to <- min(stats::time(.x)) - lubridate::days(1)
+   from <- min(stats::time(.x)) - {wind[[4]] * 4}
  } else {
    
    to <- min(.x[[td_nm]]) - lubridate::days(1)
@@ -232,7 +190,7 @@ Positions_ext <- purrr::imap(Positions_ts, ed = earliest.date, wind = params$win
   .data <- AlpacaforR::get_bars(.y, from = from, to = to)
   if (xts::is.xts(.x)) {
     .data <- xts::xts(.data[[1]][, - c("time")], order.by = .data[[1]][["time"]])
-    out <- rbind.xts(.data, .x)
+    out <- xts::rbind.xts(.data, .x)
   } else {
       out <- rbind.data.frame(.data[[1]], .x)
       out <- tibbletime::tbl_time(out, index = !!td_nm)
@@ -249,7 +207,7 @@ Positions_ext <- purrr::imap(Positions_ts, ed = earliest.date, wind = params$win
 # Add sign indicator for color change in candlestick graph 
 
 Positions_ts %<>% lapply(FUN=function(l){
-  l$chg <- sign(as.numeric(l$changePercent)) %>% as.character() %>% as.factor()
+  l$chg <- sign(as.numeric(l$changePercent)) %>% as.character() %>% generics::as.factor()
   l})
 # Dad.positions_ts %<>% lapply(FUN=function(l){
 #   l$chg <- sign(as.numeric(l$changePercent)) %>% as.character() %>% as.factor()
@@ -258,7 +216,7 @@ Positions_ts %<>% lapply(FUN=function(l){
 ```
 ```{r 'Rename to Upper' , eval = F}
 Positions_ts %<>% lapply(function(l){
-  names(l) %<>% str_to_title() 
+  names(l) %<>% stringr::str_to_title() 
   return(l)
 })
 ```
@@ -271,11 +229,11 @@ Positions_ts %<>% lapply(function(l){
 ```{r 'Fill Dates for Proper Windowing'}
 Positions_ts %<>% purrr::imap(function(.x, .y){ # Actual Time for measuring exact weeks, quarters and approx. months
   if (xts::is.xts(.x)){
-out <- xts(order.by = seq(min(time(.x)), max(time(.x)), by = "1 days")) %>% merge.xts(l) %>% na.locf()
-xtsAttributes(out) <- list(Sym = .y)
+out <- xts::xts(order.by = seq(min(stats::time(.x)), max(stats::time(.x)), by = "1 days")) %>% xts::merge.xts(l) %>% zoo::na.locf()
+xts::xtsAttributes(out) <- list(Sym = .y)
   } else {
     td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% .[1]
-    out <- data.frame(time = seq(min(.x[, td_nm, drop = T]), max(.x[, td_nm, drop = T]), by = "1 days"), stringsAsFactors = F) %>% left_join(.x) %>% na.locf 
+    out <- data.frame(time = seq(min(.x[, td_nm, drop = T]), max(.x[, td_nm, drop = T]), by = "1 days"), stringsAsFactors = F) %>% dplyr::left_join(.x) %>% na.locf 
   out <- tibbletime::tbl_time(out, index = !!td_nm)
   attr(out, "Sym") <- .y
 }
@@ -289,14 +247,14 @@ Positions.scaled_ts <- lapply(Positions_ts,FUN = function(l){l$close %<>% scale 
   l})
 key_stats <- lapply(seq_along(Positions.scaled_ts), pos=Positions.scaled_ts,timeframe = "year", FUN = function(l,pos,timeframe){
 if(!is.null(timeframe) & any(class(pos[[1]])=="data.frame")){
-  data <- pos[[l]] %>% filter(date > lubridate::floor_date(lubridate::today(), unit = timeframe))
+  data <- pos[[l]] %>% dplyr::filter(date > lubridate::floor_date(lubridate::today(), unit = timeframe))
 }else if(!is.null(timeframe) & any(class(pos[[1]])=="xts")){
-  data <- pos[[l]][time(pos[[l]]) > lubridate::floor_date(lubridate::today(),timeframe),]
+  data <- pos[[l]][stats::time(pos[[l]]) > lubridate::floor_date(lubridate::today(),timeframe),]
 }else {
   data <- pos[[l]]
 }
 data$ind <- 1:nrow(data)
-mod <- lm(close ~ ind, data = data)
+mod <- stats::lm(close ~ ind, data = data)
 out <- vector("numeric",length = 4)
 out[1] <- mod[["coefficients"]][["ind"]]
 out[2] <- caret::RMSE(mod[["fitted.values"]],mod[["model"]][["close"]])
@@ -320,12 +278,12 @@ DT::datatable(fin_stats_complete)
 ```{r 'Two Sigma Indicator'}
 # Needs 95% significance uptrend from 200day SMA
 sig <- function(.,v){
-  sapply(.,v=.,FUN=function(.,v)pnorm(.,mean(v),sd=sd(v)),simplify = "array")
+  sapply(.,v=.,FUN=function(.,v)stats::pnorm(.,mean(v),sd=stats::sd(v)),simplify = "array")
 }
 
-map_lgl(seq_along(Dad.positions_ts),pos = Dad.positions_ts,.f=function(l,pos){
-  rollapply()
-thr <- qnorm(1.1,mean(pos[[l]][,"open",]),sd(pos[[l]][,"open"]))
+dplyr::map_lgl(seq_along(Dad.positions_ts),pos = Dad.positions_ts,.f=function(l,pos){
+  zoo::rollapply()
+thr <- stats::qnorm(1.1,mean(pos[[l]][,"open",]),stats::sd(pos[[l]][,"open"]))
 any(pos[[l]][,"open"] > thr)
   })
 ```
@@ -347,19 +305,19 @@ return(out)
 })
 dad_pos_ggp <- lapply(seq_along(Dad.positions_ts),pos = Dad.positions_ts,FUN=function(l,pos){
   pos[[l]] %>% 
-  ggplot(data= ., aes(x=date, colour = chg)) +
-  theme_bw() +
-  geom_linerange(aes(ymin=low, ymax=high)) +
-  geom_segment(aes(y = open, yend = open, xend = date - {as.numeric(periodicity(date)[1])} / 2 )) +
-  geom_segment(aes(y = close, yend = close, xend = date + {as.numeric(periodicity(date)[1])} / 2)) +
-  geom_smooth(method = "lm",aes(y = close))+
+  ggplot2::ggplot(data= ., ggplot2::aes(x=date, colour = chg)) +
+  ggplot2::theme_bw() +
+  ggplot2::geom_linerange(ggplot2::aes(ymin=low, ymax=high)) +
+  ggplot2::geom_segment(ggplot2::aes(y = open, yend = open, xend = date - {as.numeric(xts::periodicity(date)[1])} / 2 )) +
+  ggplot2::geom_segment(ggplot2::aes(y = close, yend = close, xend = date + {as.numeric(xts::periodicity(date)[1])} / 2)) +
+  ggplot2::geom_smooth(method = "lm",ggplot2::aes(y = close))+
   #geom_text(aes(x = lmeq_x, y = lmeq_y, label = lm_eqn(l)), parse = TRUE) +
-  scale_colour_manual(values = c("-1" = "darkred", "1" = "darkgreen", "0" = "gray")) + theme(legend.position='none') + 
-    labs(title = names(pos)[l],
+  ggplot2::scale_colour_manual(values = c("-1" = "darkred", "1" = "darkgreen", "0" = "gray")) + ggplot2::theme(legend.position='none') + 
+    ggplot2::labs(title = names(pos)[l],
     subtitle = "1 Year Historical",
     caption = "",
     x = "Date",y = "Closing Price") +
-    theme(plot.title = element_text(hjust = .5),plot.subtitle = element_text(hjust = .5))
+    ggplot2::theme(plot.title = ggplot2::element_text(hjust = .5),plot.subtitle = ggplot2::element_text(hjust = .5))
     
 })
 
@@ -374,32 +332,32 @@ purrr::map(stringr::str_extract_all(names(Positions_ts[[1]]), ".*rv$") %>% subse
   
   v <- rlang::sym(.x)
   .data %<>% dplyr::mutate(y_var = !!v * close)
-  .data %>% ggplot(data = .,mapping = aes(x = time))+
-geom_line(aes(y = y_var))+
-  geom_line(aes(y = close)) + 
-    xlab(.x)+
-    ylab("")+
-    ggtitle(paste0("Correlation: ",cor(.data[["y_var"]], .data[["close"]])))+
-    theme(plot.title = element_text(hjust = .5),plot.subtitle = element_text(hjust = .5))
+  .data %>% ggplot2::ggplot(data = .,mapping = ggplot2::aes(x = time))+
+ggplot2::geom_line(ggplot2::aes(y = y_var))+
+  ggplot2::geom_line(ggplot2::aes(y = close)) + 
+    ggplot2::xlab(.x)+
+    ggplot2::ylab("")+
+    ggplot2::ggtitle(paste0("Correlation: ",stats::cor(.data[["y_var"]], .data[["close"]])))+
+    ggplot2::theme(plot.title = ggplot2::element_text(hjust = .5),plot.subtitle = ggplot2::element_text(hjust = .5))
 })
 ```
 
 ```{r 'Charts for Individual Portfolio'}
 pos_ggp <- lapply(seq_along(pos),pos = pos,FUN=function(l,pos){
   pos[[l]] %>% 
-  ggplot(data= ., aes(x=date, colour = chg)) +
-  theme_bw() +
-  geom_linerange(aes(ymin=low, ymax=high)) +
-  geom_segment(aes(y = open, yend = open, xend = date - {as.numeric(periodicity(date)[1])} / 2 )) +
-  geom_segment(aes(y = close, yend = close, xend = date + {as.numeric(periodicity(date)[1])} / 2)) +
-  geom_smooth(method = "lm",aes(y = close))+
+  ggplot2::ggplot(data= ., ggplot2::aes(x=date, colour = chg)) +
+  ggplot2::theme_bw() +
+  ggplot2::geom_linerange(ggplot2::aes(ymin=low, ymax=high)) +
+  ggplot2::geom_segment(ggplot2::aes(y = open, yend = open, xend = date - {as.numeric(xts::periodicity(date)[1])} / 2 )) +
+  ggplot2::geom_segment(ggplot2::aes(y = close, yend = close, xend = date + {as.numeric(xts::periodicity(date)[1])} / 2)) +
+  ggplot2::geom_smooth(method = "lm",ggplot2::aes(y = close))+
   #geom_text(aes(x = lmeq_x, y = lmeq_y, label = lm_eqn(l)), parse = TRUE) +
-  scale_colour_manual(values = c("-1" = "darkred", "1" = "darkgreen", "0" = "gray")) + theme(legend.position='none') + 
-    labs(title = names(pos)[l],
+  ggplot2::scale_colour_manual(values = c("-1" = "darkred", "1" = "darkgreen", "0" = "gray")) + ggplot2::theme(legend.position='none') + 
+    ggplot2::labs(title = names(pos)[l],
     subtitle = "1 Year Historical",
     caption = "",
     x = "Date",y = "Closing Price") +
-    theme(plot.title = element_text(hjust = .5),plot.subtitle = element_text(hjust = .5))
+    ggplot2::theme(plot.title = ggplot2::element_text(hjust = .5),plot.subtitle = ggplot2::element_text(hjust = .5))
     
 })
 
@@ -548,7 +506,7 @@ AND [Daily Low < Daily Parabolic SAR(0.01,0.2)]
 knitr::read_chunk("JobsScripts/AddAllVariablestoData.R", labels = "Add SAR Indicator")
 ```
 ```{r 'SAR Tune'}
-sarParam_df <- expand.grid(af = c(seq(.01,.2,.01)), mf = c(5,10,20,50)) %>% mutate(maf = af*mf) %>% select(-mf)
+sarParam_df <- expand.grid(af = c(seq(.01,.2,.01)), mf = c(5,10,20,50)) %>% dplyr::mutate(maf = af*mf) %>% dplyr::select(-mf)
 
 ```
 </div>
@@ -590,7 +548,7 @@ rstudioapi::jobRunScript("JobsScripts/AddTSLRV.R",workingDir = getwd(), exportEn
 #Load Position_ts from csv Backups
 pdatapath <- "~/R/Quant/PositionData"
 datetime <- list.files(path = pdatapath)[stringr::str_which(list.files(path = pdatapath), "_rv\\.csv$")] %>% stringr::str_extract("\\d{4}-\\d{2}-\\d{2}(?=\\_rv\\.csv)") %>% lubridate::ymd() %>% max() %>% as.character() 
-Positions_ts <- list.files(path = pdatapath)[stringr::str_which(list.files(path = pdatapath), paste0(datetime,"_rv\\.csv$"))] %>% setNames(object = ., stringr::str_extract(., "^[A-Z]+")) %>%  purrr::imap(function(.x, .y){
+Positions_ts <- list.files(path = pdatapath)[stringr::str_which(list.files(path = pdatapath), paste0(datetime,"_rv\\.csv$"))] %>% stats::setNames(object = ., stringr::str_extract(., "^[A-Z]+")) %>%  purrr::imap(function(.x, .y){
   out <- readr::read_csv(file = paste0("PositionData/",.x)) %>% dplyr::mutate_at( dplyr::vars(time, dplyr::ends_with("_ind")), dplyr::funs(as.POSIXct, .args = list(origin = lubridate::origin)))
   attr(out, "Sym") <- .y
   out
@@ -603,7 +561,7 @@ Positions_ts %<>% purrr::imap(function(.x, .y){ # Actual Time for measuring exac
   if (xts::is.xts(.x)){
     out <- .x
 #out <- xts(order.by = seq(min(time(.x)), max(time(.x)), by = "1 days")) %>% merge.xts(l) %>% na.locf()
-xtsAttributes(out) <- list(Sym = .y)
+xts::xtsAttributes(out) <- list(Sym = .y)
   } else {
     out <- .x
     #out <- data.frame(time = seq(min(out[, td_nm, drop = T]), max(out[, td_nm, drop = T]), by = "1 days"), stringsAsFactors = F) %>% left_join(.x) %>% na.locf 
@@ -635,9 +593,9 @@ Positions_ts <- purrr::map(Positions_ts, function(.x){
 purrr::map2(.x = Positions_ts, .y = names(Positions_ts), function(.x, .y){
   print(.y)
   if (!xts::is.xts(.x)) {
-  write_csv(.x, path = paste0("PositionData/",.y,min(.x$Time),"_",max(.x$Time),".csv"))
+  readr::write_csv(.x, path = paste0("PositionData/",.y,min(.x$Time),"_",max(.x$Time),".csv"))
     } else {
-    zoo::write.zoo(.x, file = paste0("PositionData/",.y,time(.x) %>% min,"_",time(.x) %>% max,".csv"), index.name = "Time", col.names = T)
+    zoo::write.zoo(.x, file = paste0("PositionData/",.y,stats::time(.x) %>% min,"_",stats::time(.x) %>% max,".csv"), index.name = "Time", col.names = T)
   }
 })
 ```
@@ -651,7 +609,7 @@ bymin <- list.files(path = "PositionData", pattern = "bymin", full.names = T) %>
  out <- append(as.character(time[!is.na(time)]), as.character(Time[!is.na(Time)]))
   lubridate::ymd_hms(out)
 }, .f = function(.x, .y, fT) {
-  out <- read.csv(.x) %>% mutate(time = fT(time,Time)) %>% select(- Time)
+  out <- utils::read.csv(.x) %>% dplyr::mutate(time = fT(time,Time)) %>% dplyr::select(- Time)
   readr::write_csv(out, path = .x, col_names = T)
   })
 ```
@@ -672,7 +630,7 @@ rstudioapi::jobRunScript("JobsScripts/AddIVstoData.R", workingDir = getwd(), exp
 Positions_ts <- purrr::map2(Positions_ts, dat, function(.x, .y){
   s <- attr(.x, 'Sym')
   if (xts::is.xts(.x) & xts::is.xts(.y)) {
-    out <- window(.y, start = min(time(.x)))
+    out <- stats::window(.y, start = min(stats::time(.x)))
   } else {
      td_nm <- stringr::str_extract(names(.x), "^time$|^date$") %>% subset(subset = !is.na(.)) %>% .[1]
     out <- .y[.y[[td_nm]] >= min(.x[[td_nm]]), ]
@@ -685,14 +643,13 @@ assign("Positions_ts_iv", Positions_ts , envir = globalenv())
 ```
 
 ```{r 'Add RVs to Data'}
-dat <- purrr::map(Positions_ts_rv, ~ dplyr::select(.x, - dplyr::ends_with("rv"), - dplyr::ends_with("ind")))
+dat <- Positions_ts
 # Set the signal windows desired in parameters.r
 source("~/R/Quant/JobsScripts/parameters.R")
 add <- F
 save(dat, TSLvars, add, file = "~/R/Quant/dat.Rdata")
 rstudioapi::jobRunScript("JobsScripts/AddRVstoData.R", workingDir = getwd(), exportEnv = "R_GlobalEnv", importEnv = F)
 # Save
-rstudioapi::setCursorPosition(SL)
 ```
 
 ```{r 'Load Positions_ts_rv from HD'}
@@ -703,14 +660,16 @@ Positions_ts_rv <- purrr::map(Positions_v, function(.x){
       message(paste0("Reading data: ", .x))
       .rv_data <- readr::read_csv(.rvs)
   if (dplyr::select(.rv_data, dplyr::ends_with("ind")) %>% purrr::map(~ is.numeric(.x)) %>% any) {
-    .rv_data <- dplyr::mutate_at(.rv_data, dplyr::vars(dplyr::ends_with("ind")), ~ lubridate::as_datetime(., origin = lubridate::origin))
+    .rv_data <- dplyr::mutate_at(.rv_data, dplyr::vars(dplyr::ends_with("ind")), ~ lubridate::as_datetime(., tz = "EST"))
   }
       td_nm <- stringr::str_extract(names(.rv_data), stringr::regex("^time$|^date$", ignore_case = T)) %>% purrr::keep(~ !is.na(.x)) %>% .[1]
       #If any of the sell indexes are greater than the maximum time index then make them the max time index. Necessary to make up for the deletion of a row due to the artifact.
       t_max <- max(.rv_data[[td_nm]])
   if (any(dplyr::select(.rv_data, dplyr::ends_with("ind")) %>% purrr::map(~ max(.x, na.rm = T)) > t_max)) {
-    .rv_data <- dplyr::mutate_at(.rv_data, dplyr::vars(dplyr::ends_with("ind")), ~ {
-      if (.x > t_max) .x <- NA_complex_ else .x
+    message("Some rv index values exceed the time scale - fixing")
+    .rv_data <- .rv_data %>% dplyr::rowwise() %>% dplyr::mutate_at( dplyr::vars(dplyr::ends_with("ind")), ~ {
+      
+      if (is.na(.x) | .x > t_max) .x <- NA else .x
       .x
     })
   }
@@ -721,31 +680,12 @@ Positions_ts_rv <- purrr::map(Positions_v, function(.x){
     # readr::write_csv(.rv_data, path = paste0("~/R/Quant/PositionData/",.x , min(.rv_data[[td_nm]]) %>% lubridate::as_date(), "_", max(.rv_data[[td_nm]]) %>% lubridate::as_date(), "_rv.csv"))
      return(.rv_data)
 })
-```
 
-```{r 'Join with existing RVs'}
-Positions_ts_iv <- purrr::imap(Positions_ts_iv, function(.x,.y){attr(.x, "Sym") <- .y
-return(.x)})
-
-Positions_ts_rv_iv <- purrr::map2(Positions_ts_iv, Positions_ts_rv, function(.x, .y){
-  s <- attr(.x, 'Sym')
-  if (xts::is.xts(.x) & xts::is.xts(.y)) {
-    out <- xts::merge.xts(.x, .y, join = "left")
-  } else {
-     nms <- stringr::str_extract(names(.x), "^time$|^date$|^open$|^high$|^low$|^close$|^volume$") %>% subset(subset = !is.na(.)) 
-     
-    out <- dplyr::left_join(.x, .y, by = nms)
-  }
-  attr(out, 'Sym') <- s
-  return(out)
+purrr::map(Positions_ts_rv, function(.x){
+  ind <- .x %>% dplyr::select(dplyr::ends_with("ind"))
+  purrr::map_dfr(ind, ~ range(.x))
 })
 ```
-
-
-
-
-
-
 
 ```{r 'Add Gain Mix Period RVs'}
 # Deprecated
@@ -757,7 +697,6 @@ rstudioapi::setCursorPosition(SL)
 
 ```
 
-
 ```{r 'Map Returns'}
 pct <- seq(.00, .2, .01)
 names(pct) <- seq(.00, .2, .01)
@@ -768,12 +707,34 @@ rstudioapi::jobRunScript(path = "JobsScripts/MapReturns.R", workingDir = getwd()
 
 
 ```
+
+```{r 'Join RV & IV'}
+Positions_ts_iv <- purrr::imap(Positions_ts_iv, function(.x,.y){attr(.x, "Sym") <- .y
+return(.x)})
+
+Positions_ts_rv_iv <- purrr::map2(Positions_ts_iv[names(Positions_ts_rv)], Positions_ts_rv, function(.x, .y){
+  s <- attr(.x, 'Sym')
+  if (xts::is.xts(.x) & xts::is.xts(.y)) {
+    out <- xts::merge.xts(.x, .y, join = "left")
+  } else {
+     nms <- stringr::str_extract(names(.x), "^time$|^date$|^open$|^high$|^low$|^close$|^volume$") %>% subset(subset = !is.na(.)) 
+    out <- dplyr::left_join(.x, .y, by = nms)
+    out <- tibbletime::tbl_time(out, index = !! params$getTimeIndex(out)) 
+  }
+  attr(out, 'Sym') <- s
+  return(out)
+})
+```
+
+
+
 ```{r 'View Optimized Returns'}
 Positions_ret <- ret
 save(Positions_ret, file = "Positions_ret.Rdata", compress = "xz")
 load("Positions_ret.Rdata")
 # ----------------------- Thu Jul 18 17:46:44 2019 ------------------------#
 #Best returns
+
 best.returns <- Positions_ret %>% purrr::map_depth(.depth = 2, .f = function(.x){
   out <- list()
   out$trades <- purrr::map(.x, .f = magrittr::extract, "trades") %>% purrr::map(.f = `[[`, 1)
@@ -791,7 +752,7 @@ best.returns <- Positions_ret %>% purrr::map_depth(.depth = 2, .f = function(.x)
   return(out)
   }) %>% purrr::map(~data.table::rbindlist(., idcol = T)) %>% data.table::rbindlist(., idcol = T)
 names(best.returns)[c(1:3)] <- c("sym","tsl","pct")
-best.returns %>% group_by(sym, tsl) %>% filter(Cum.Returns == max(Cum.Returns))
+best.returns %>% dplyr::group_by(sym, tsl) %>% dplyr::filter(Cum.Returns == max(Cum.Returns))
 #End best returns
  #----------------------- Thu Jul 18 17:47:20 2019 ------------------------#
 # ----------------------- Thu Jul 18 18:02:42 2019 ------------------------#
@@ -849,13 +810,13 @@ tsl_performance <- purrr::map_depth(ret, .depth = 3, .f = function(.x) {
   d <- do.call("rbind",.x) 
   rd <- rownames(d) 
   d %<>% as.data.frame() 
-  d %<>%  mutate_all(funs(as.numeric(as.character(.))))
+  d %<>%  dplyr::mutate_all(dplyr::funs(as.numeric(as.character(.))))
   row.names(d) <- rd
   d %<>% tibble::rownames_to_column()
-  if (identical(d %>% arrange(desc(Returns)) %>% .[1,2],d %>% arrange(desc(Cum.Returns)) %>% .[1,2])){
-  out <- d %>% arrange(desc(Returns)) %>% .[1,]
+  if (identical(d %>% dplyr::arrange(dplyr::desc(Returns)) %>% .[1,2],d %>% dplyr::arrange(dplyr::desc(Cum.Returns)) %>% .[1,2])){
+  out <- d %>% dplyr::arrange(dplyr::desc(Returns)) %>% .[1,]
   } else {
-      out <-  rbind.data.frame(d %>% arrange(desc(Returns)) %>% .[1,],d %>% arrange(desc(Cum.Returns)) %>% .[1,])
+      out <-  rbind.data.frame(d %>% dplyr::arrange(dplyr::desc(Returns)) %>% .[1,],d %>% dplyr::arrange(dplyr::desc(Cum.Returns)) %>% .[1,])
   }
   return(out)
  })
@@ -865,9 +826,10 @@ tsl_performance <- purrr::map_depth(ret, .depth = 3, .f = function(.x) {
 load(file = params$paths$Positions_tsl)
 best_tsl <- purrr::map2(Positions_tsl[names(dat)], .y = dat, tslv = params$TSLvars, function(.x, .y, tslv){
   .x %<>% dplyr::mutate_at(dplyr::vars(tsl),~ stringr::str_replace(.,"\\_rv$",""))
+  .x %<>% dplyr::group_by(tsl, pct) %>% dplyr::summarise(Cum.Returns = mean(Cum.Returns), `75%max` = mean(`75%max`),`100%max` = mean(`100%max`)) %>% dplyr::mutate_at(dplyr::vars(dplyr::contains("%")), ~ as.numeric(.))
   # Get the TSL with the most cumulative returns and with the most possible limit gain for a given period
   out <- list(tsl_types = rbind.data.frame(dplyr::arrange(.x, dplyr::desc(Cum.Returns)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")],
-  dplyr::arrange(.x, dplyr::desc(`100%max`)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")]))
+  dplyr::arrange(.x, dplyr::desc(`100%max`)) %>% .[1, c("tsl", "pct", "75%max", "100%max", "Cum.Returns")]) %>% dplyr::ungroup())
   # Are there tsl not already represented in the data?
   existing_tsl <- {out$tsl_types$tsl[out$tsl_types$tsl %in% {names(.y)[stringr::str_which(names(.y),"rv$")] %>% stringr::str_replace(.,"\\_rv$","")}] %>% length} > 0
   # If there are and add is true (defaults to true) then add only those that don't already exist
@@ -926,7 +888,7 @@ modelSpecs <- purrr::map(modelSpecs, tG = tuningGrids, mlist = methodlist, funct
   pf <- sys.frame(sys.nframe())
   # If there are models in methodlist missing from the current specified modelspecs
   if (any(!mlist %in% names(mS))) {
-  mS <- append(mS, purrr::map(mlist[!mlist %in% names(mS)], ~ caretEnsemble::caretModelSpec(method = ., tuneLength = 7))) %>% setNames(nm = c(names(mS),mlist[!mlist %in% names(mS)]))
+  mS <- append(mS, purrr::map(mlist[!mlist %in% names(mS)], ~ caretEnsemble::caretModelSpec(method = ., tuneLength = 7))) %>% stats::setNames(nm = c(names(mS),mlist[!mlist %in% names(mS)]))
   } 
   if (any(purrr::imap_lgl(mS[names(tG)], pf = pf, function(.x, .y, pf){
      is.null(.x$tuningGrid) & !is.null(pf$tG[[.y]])
@@ -940,8 +902,7 @@ modelSpecs <- purrr::map(modelSpecs, tG = tuningGrids, mlist = methodlist, funct
   return(mS)
 })
 # Get names not represented in modelSpecs thus far
-nms <- names(Positions_ts_rv_iv)[!names(Positions_ts_rv_iv) %in% names(modelSpecs)]
-names(nms) <- names(Positions_ts_rv_iv)[!names(Positions_ts_rv_iv) %in% names(modelSpecs)]
+nms <- dplyr::setdiff(names(Positions_ts_rv),names(modelSpecs)) %>% stats::setNames(dplyr::setdiff(names(Positions_ts_rv),names(modelSpecs)))
 # Append new caretModelSpecs
 modelSpecs <- append(modelSpecs, purrr::map(nms, mS = modelSpecs[[1]], function(.x, mS){
   out <- purrr::imap(mS, function(.x, .y){
@@ -962,30 +923,71 @@ modelSpecs <- purrr::map(modelSpecs, function(.x){
   })
 })
 # Sort
-modelSpecs <- modelSpecs[names(Positions_ts_rv_iv)]
+modelSpecs <- modelSpecs[names(Positions_ts_rv)]
 ```
 
 ```{r 'Machine Learning Algorithm Training'}
 # Recommended to clear environment and then load data so as to free up all RAM
 rm(list = ls())
-load(file = params$paths$Positions_ts)
+load(file = params$paths$Positions_ts_rv_iv)
 load(file = params$paths$Positions_tsl)
 #methodList <- c("xgbTree", "C5.0", "mlpKerasDropout", "mlpKerasDecay") # Add method names. See http://topepo.github.io/caret/available-models.html for details
     # If first run, use tunelength. If final or subsequent runs with a refined tuning grid, provide tuneGrids in the lapply call (not in it's function)
 
-dat <- Positions_ts_rv_iv[11:20] # Pass the list of timeseries objects for which algorithms will trained
+dat <- Positions_ts_rv_iv[1] # Pass the list of timeseries objects for which algorithms will trained
 train_rvs <- NULL
-best_tsl <- best_tsl[names(dat)]
-modelSpecs <- modelSpecs[11:20]
-save(modelSpecs, dat, best_tsl, file = "dat_dt.Rdata")
+best_tsl <- best_tsl[names(dat)[1]]
+modelSpecs <- modelSpecs[names(dat)[1]]
+# .replace - boolean indicating whether to replace existing models or to simply add new ones (FALSE)
+.replace <- F
+save(modelSpecs, dat, best_tsl, .replace, file = "dat_dt.Rdata")
 # ----------------------- Mon Jun 03 06:12:02 2019 ------------------------#
 # Important to filter all none profitable signals from the type prediction
 rstudioapi::jobRunScript(path = "JobsScripts/TrainModels.R", workingDir = getwd(), importEnv = F,exportEnv = "R_GlobalEnv")
 
 ```
+```{r 'Remove gain and mix type or other objects'}
+
+total.time <- purrr::map2(c('TSLA','AMD','BYND','TSM','MSFT','XSW','CGC','TLRY','UNH','NFLX','GRPN','V','SQ','PYPL'), best_tsl[c('TSLA','AMD','BYND','TSM','MSFT','XSW','CGC','TLRY','UNH','NFLX','GRPN','V','SQ','PYPL')], function(.x, .y){
+  .fn <- list.files(path = "~/R/Quant/MdlBkp", pattern = paste0(.x,"_cl.Rdata"), full.names = T)
+  # Get the name of the object
+  ob_chr <- paste0(.x, "_cl")
+  message(paste0("Loading: ", .x))
+  # Load the data
+  .st <- system.time({
+     try({load(.fn)})
+  })
+  message(paste0(.x, ": Load time - ", lubridate::as.duration(.st[3])))
+  ob <- get0(ob_chr)
+  message(paste0("Names before: ", paste0(names(ob), collapse = ", ")))
+  .ob_nms <- names(ob)
+  .tsl <- unique(paste0(.y$tsl_types$tsl,"_rv"))
+  if (!all(.tsl %in% names(ob))) .out <- .tsl[!.tsl %in% names(ob)] else .out <- NULL
+  if (any(!names(ob) %in% .tsl)){
+  .keep <- purrr::map_lgl(ob, function(.x){
+    stringr::str_detect(.x[[1]][["coefnames"]], "LI$") %>% any
+    })
+  message(paste0("keeping: ", paste0(names(.keep)[.keep], collapse = ", ")))
+  ob <- ob[.keep]
+  }
+  ob <- ob[!names(ob) %in% c("Mix_type", "Gain_type")]
+  message(paste0("Names after: ", paste0(names(ob), collapse = ", ")))
+  if (all(.ob_nms %in% names(ob))) return(.out)
+  assign(ob_chr, ob)
+  message(paste0(.x, ": Saving..."))
+    # .proceed <- readline("Proceed?")
+    # if (.proceed == "n") stop("Do not proceed.") 
+  .st <- system.time({
+     save(list = ob_chr, file = .fn, compress = "bzip2")
+  })
+ return(.out)
+})
+```
 
 
 ```{r 'Examine Ensemble Models'}
+res <- purrr::map2(PYPL_cl[[3]], PYPL_cl[[4]], ~ .x$results %>% dplyr::mutate(id = 1) %>% rbind.data.frame(.y$results %>% dplyr::mutate(id =2)))
+purrr::map(res, ~ table(utils::head(.x %>% dplyr::arrange(RMSE))$id))
 model_nms <- list.files("MdlBkp/", full.names = T, include.dirs = T)
 load(model_nms[6])
 ```
@@ -997,8 +999,8 @@ save(dat_dt, file = paste0("xgBoost",Positions_ts$GOOG %>% time %>% min,"_",Posi
 Model_Perf <- parallel::mclapply(Positions_dt, function(dt){
   if(is.null(dt)) return(NULL)
   names(dt) <-  purrr::map(dt, purrr::pluck, "terms", 2) %>% as.character()
-  mdl_performance <- rbindlist(purrr::map2(.x = dt, .y = names(dt), function(.x, .y){
-    out <- purrr::pluck(.x,"results") %>% mutate(Model = .y)
+  mdl_performance <- data.table::rbindlist(purrr::map2(.x = dt, .y = names(dt), function(.x, .y){
+    out <- purrr::pluck(.x,"results") %>% dplyr::mutate(Model = .y)
     return(out)})
   )
   out <- list()
@@ -1009,7 +1011,7 @@ Model_Perf <- parallel::mclapply(Positions_dt, function(dt){
     out$mod_plot <- xgboost::xgb.ggplot.importance(out$mod_imp)
     return(out)
     })
-  out$mdl_performance <- mdl_performance %>% mutate(Mod_Rank = percent_rank(Rsquared)) %>% arrange(desc(Mod_Rank))
+  out$mdl_performance <- mdl_performance %>% dplyr::mutate(Mod_Rank = dplyr::percent_rank(Rsquared)) %>% dplyr::arrange(dplyr::desc(Mod_Rank))
   return(out)
   })
 # Remove training data to create a smaller file
@@ -1030,7 +1032,7 @@ GRPN[, c('open','high','low','close','volume')] <- quantmod::OHLCV(GRPN) %>% app
   r[stringr::str_detect(r,"REF")] <- NA
   return(r)
 }) %>% t %>% zoo::na.locf()
-GRPN %<>% mutate_at(vars(c(2:6)),funs(as.numeric))
+GRPN %<>% dplyr::mutate_at(dplyr::vars(c(2:6)),dplyr::funs(as.numeric))
 GRPN$changePercent <- purrr::map_dbl(1:nrow(GRPN), GRPN = GRPN, function(.x, GRPN){
   if (stringr::str_detect(GRPN[.x, "changePercent"], "REF")) {
   out <- (GRPN[.x,c("close"), drop = T] - GRPN[.x - 1,c("close"), drop = T]) / GRPN[.x - 1,c("close"), drop = T] 
@@ -1046,7 +1048,7 @@ BYND[, c('open','high','low','close','volume')] <- quantmod::OHLCV(BYND) %>% app
   r[stringr::str_detect(r,"REF")] <- NA
   return(r)
 }) %>% t %>% zoo::na.locf()
-BYND %<>% mutate_at(vars(c(2:6)),funs(as.numeric))
+BYND %<>% dplyr::mutate_at(dplyr::vars(c(2:6)),dplyr::funs(as.numeric))
 BYND$changePercent <- purrr::map_dbl(1:nrow(BYND), BYND = BYND, function(.x, BYND){
   if (stringr::str_detect(BYND[.x, "changePercent"], "REF")) {
   out <- (BYND[.x,c("close"), drop = T] - BYND[.x - 1,c("close"), drop = T]) / BYND[.x - 1,c("close"), drop = T] 
@@ -1062,7 +1064,6 @@ Positions_ts$BYND <- BYND
 ## Create OOT & Add Signals 
 ```{r 'Gather new Data from Portfolio Sheet', eval = F}
 # Deprecated - Google Finance is unreliable
-googlesheets::gs_auth(token = "~//R//sholsen_googlesheets_token.rds")
 gsPositions <- googlesheets::gs_url("https://docs.google.com/spreadsheets/d/1Iazn6lYRMhe-jdJ3P_VhLjG9M9vNWqV-riBmpvBBseg/edit#gid=0")
 shts <- purrr::map(.x = c('Holdings', '(Hi)' , '(Lo)', '(Op)', '(Vo)', '(cP)'), gs = gsPositions, .f =  function(.x, gs){
     out <- googlesheets::gs_read(gs, ws = .x, trim_ws = T)
@@ -1086,7 +1087,7 @@ Positions_new <- purrr::map(Positions_v, shts = shts, function(.x, shts){
     toNum <- function(x){
   x %>% stringr::str_replace_all("\\$|\\,","") %>% as.numeric
     }  
-    clm %<>% mutate_if(.pred = funs(is.factor),funs(toNum))
+    clm %<>% dplyr::mutate_if(.pred = dplyr::funs(is.factor),dplyr::funs(toNum))
     dt.clm <- purrr::pluck(shts[[1]],"Date")
     out <- cbind.data.frame(Time = dt.clm, clm) 
     out %<>% na.omit
@@ -1097,6 +1098,7 @@ Positions_new <- purrr::map(Positions_v, shts = shts, function(.x, shts){
   return(out)
 })
 ```
+
 
 
 ```{r 'Add Signals to New Data'}
@@ -1284,7 +1286,7 @@ trailStop <- function(cl,buy,dcol,amt=NULL,wind=NULL,std=NULL,prcnt=NULL,hi=NULL
   trail.args <- c(amt=amt,wind=wind,prcnt=prcnt)
   e <- new.env()
   if(all(is.null(trail.args))){stop("One type of value must be specified")}
-  if(exists("wind") & not(exists("lo"))){stop("Period low column must be specified")}
+  if(exists("wind") & magrittr::not(exists("lo"))){stop("Period low column must be specified")}
   trail.type <- names(trail.args)[which(!is.null(trail.args))]
   vout <- sapply(seq_along(buy),simplify=T,buy=buy,trail.type=trail.type,trail.args=trail.args,cl=cl,dcol=dcol,std=std,lo=lo,hi=hi,FUN=function(i,buy,trail.type,trail.args,cl,lo,hi,dcol,std){
     if(buy[i] == "buy" & trail.type == "wind" & is.null(std) & !is.null(hi)){
@@ -1303,7 +1305,7 @@ trailStop <- function(cl,buy,dcol,amt=NULL,wind=NULL,std=NULL,prcnt=NULL,hi=NULL
       assign("trail", trail, envir=e)
     }else if(buy[i] == "buy" & trail.type == "wind" & !is.null(std)){
       cl.ind <- cl[c(seq(i,i - trail.args[trail.type]))]
-      trail <- sd(cl.ind)/cl[i]
+      trail <- stats::sd(cl.ind)/cl[i]
       attr(trail,"type") <- "prcnt" # assign the type of the trailing stop
       attr(trail,"i") <- i
       assign("trail", trail, envir=e)
@@ -1352,9 +1354,9 @@ trailStop <- function(cl,buy,dcol,amt=NULL,wind=NULL,std=NULL,prcnt=NULL,hi=NULL
 }
 #trailStop(cl=TS.adxsar$GOOG$close,buy=TS.adxsar$GOOG$ADXSAR.i,dcol=TS.adxsar$GOOG$Diff,wind=5,lo=TS.adxsar$GOOG$low)
 TS.adxsar %<>% lapply(FUN=function(l){
-  l %<>% mutate(Diff=c(0,diff(close)),Trail=trailStop(cl=close,buy=ADXSAR.i,dcol=Diff,wind=8,std=T))
+  l %<>% dplyr::mutate(Diff=c(0,diff(close)),Trail=trailStop(cl=close,buy=ADXSAR.i,dcol=Diff,wind=8,std=T))
 })
-googleVis::gvisTable(TS.adxsar$GOOG) %>% plot
+
 ```
 
 <p>Let's step up the complexity a bit with a machine learning algorithm that takes a lag window as inputs and outputs predictions for price movement.</p>
@@ -1363,17 +1365,17 @@ googleVis::gvisTable(TS.adxsar$GOOG) %>% plot
 library(caret)
 library(caretEnsemble)
 
-data.tr <- dplyr::select(TS.adxsar$GOOG,close,sar,ADXv,DIn,DIp,DX,sar.i,adx.i,pr) %>% mutate(Diff=c(diff(close),0)) %>% na.omit # make the diff of the next day in line with the current day bc that is what needs to be predicted
+data.tr <- dplyr::select(TS.adxsar$GOOG,close,sar,ADXv,DIn,DIp,DX,sar.i,adx.i,pr) %>% dplyr::mutate(Diff=c(diff(close),0)) %>% na.omit # make the diff of the next day in line with the current day bc that is what needs to be predicted
 data.tr %<>% renamena()
 data.tr %<>% convert2dummyVars() 
 
 rv <- "Diff" # Name of response variable
 req.packages <- c("caret","doParallel","iterators","parallel","foreach") # [package dependencies]
   startPkgs <- Vectorize(FUN=function(pkg){suppressPackageStartupMessages(library(pkg,character.only = T))})
-  startPkgs(req.packages)
-cl <- makeCluster(detectCores()-1)
-  registerDoParallel(cl)
-  getDoParWorkers()
+  HDA::startPkgs(req.packages)
+cl <- parallel::makeCluster(parallel::detectCores()-1)
+  doParallel::registerDoParallel(cl)
+  foreach::getDoParWorkers()
   sysT.mod <- system.time({ #[model name]
   data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
   data.train <- caret::trainControl(method="repeatedcv",
@@ -1384,7 +1386,7 @@ cl <- makeCluster(detectCores()-1)
                              allowParallel = T,
                              returnData = F,
                              returnResamp = "all")
-  form <- as.formula(paste0(rv," ~ .")) #[y-var]
+  form <- stats::as.formula(paste0(rv," ~ .")) #[y-var]
   
   mod <- caret::train(form = form, # [model name]
                       data = data.tr,
@@ -1394,22 +1396,22 @@ cl <- makeCluster(detectCores()-1)
                       tuneLength = 10)
   })
  
-  stopCluster(cl);registerDoSEQ()
+  parallel::stopCluster(cl);foreach::registerDoSEQ()
 ```
 
 ```{r, 'Predict Diff using Various ML Algorithms', echo=TRUE}
 library(caret)
 library(caretEnsemble)
 data.tr <- renamena(TS.adxsar$GOOG)
-data.tr <- dplyr::select(data.tr,close,sar,ADXv,DIn,DIp,DX,sar.i,adx.i,pr) %>% mutate(Diff=c(diff(close),0)) %>% na.omit # make the diff of the next day in line with the current day bc that is what needs to be predicted
+data.tr <- dplyr::select(data.tr,close,sar,ADXv,DIn,DIp,DX,sar.i,adx.i,pr) %>% dplyr::mutate(Diff=c(diff(close),0)) %>% na.omit # make the diff of the next day in line with the current day bc that is what needs to be predicted
 data.tr[,sapply(data.tr,is.factor)] %<>% lapply(as.numeric)
 rv <- "Diff" # Name of response variable
 req.packages <- c("caret","doParallel","iterators","parallel","foreach") # [package dependencies]
   startPkgs <- Vectorize(FUN=function(pkg){suppressPackageStartupMessages(library(pkg,character.only = T))})
-  startPkgs(req.packages)
-cl <- makeCluster(detectCores()-1)
-  registerDoParallel(cl)
-  getDoParWorkers()
+  HDA::startPkgs(req.packages)
+cl <- parallel::makeCluster(parallel::detectCores()-1)
+  doParallel::registerDoParallel(cl)
+  foreach::getDoParWorkers()
   sysT.mod <- system.time({ #[model name]
   data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
   data.train <- caret::trainControl(method="repeatedcv",
@@ -1422,7 +1424,7 @@ cl <- makeCluster(detectCores()-1)
                              classProbs=T, 
                              savePredictions = "final",
                              returnResamp = "final")
-  form <- as.formula(paste0(rv," ~ .")) #[y-var]
+  form <- stats::as.formula(paste0(rv," ~ .")) #[y-var]
   
   mod <- caretEnsemble::caretList(form = form, # [model name]
                                        data = data.tr,
@@ -1433,7 +1435,7 @@ cl <- makeCluster(detectCores()-1)
                                          method="avNNet", tuneLength = 10),"gamSpline"=caretEnsemble::caretModelSpec(
                                          method="gamSpline", tuneLength = 10),"kknn"=caretEnsemble::caretModelSpec(
                                          method="kknn", tuneLength = 10)))
-  stopCluster(cl);registerDoSEQ()
+  parallel::stopCluster(cl);foreach::registerDoSEQ()
   })
   
 lapply(mod,purrr::pluck,"results","MAE") %>% lapply(mean)
@@ -1444,13 +1446,13 @@ mod
 
 ```{r 'Try Classification'}
 diff2fac <- function(Diff){
-  if(is.numeric(Diff)){x <- as.factor(sign(Diff))}else{
+  if(is.numeric(Diff)){x <- generics::as.factor(sign(Diff))}else{
 Diff %<>% forcats::fct_recode('n'='-1','z'='0','p'='1')}}
-data.tr %<>% mutate(sDiff=diff2fac(sDiff)) 
+data.tr %<>% dplyr::mutate(sDiff=diff2fac(sDiff)) 
 rv <- "sDiff"
-cl <- makeCluster(detectCores()-1)
-  registerDoParallel(cl)
-  getDoParWorkers()
+cl <- parallel::makeCluster(parallel::detectCores()-1)
+  doParallel::registerDoParallel(cl)
+  foreach::getDoParWorkers()
   sysT.mod <- system.time({ #[model name]
   data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
   data.train <- caret::trainControl(method="repeatedcv",
@@ -1463,7 +1465,7 @@ cl <- makeCluster(detectCores()-1)
                              classProbs=T, 
                              savePredictions = "final",
                              returnResamp = "final")
-  form <- as.formula(paste0(rv," ~ .")) #[y-var]
+  form <- stats::as.formula(paste0(rv," ~ .")) #[y-var]
   
   mod <- caretEnsemble::caretList(form = form, # [model name]
                                        data = data.tr,
@@ -1481,11 +1483,11 @@ cl <- makeCluster(detectCores()-1)
     "LogitBoost"=caretEnsemble::caretModelSpec(
                                          method="LogitBoost", tuneLength = 10)
     ))
-  stopCluster(cl);registerDoSEQ()
+  parallel::stopCluster(cl);foreach::registerDoSEQ()
   })
   lapply(mod,purrr::pluck,"results","Accuracy") %>% lapply(mean)
   unloadPkgs <- Vectorize(FUN=function(pkg){detach(pkg,character.only = T)})
-  unloadPkgs(req.packages)
+  HDA::unloadPkgs(req.packages)
 ```
 <p>Which stocks to invest in, how much to allocate to these stocks, which stocks are trending and which are oscillating, where to set your trailing stop-loss, e.t.c.</p> <a href="https://www.quora.com/Can-machine-learning-algorithms-models-predict-the-stock-prices-If-yes-which-are-the-best-machine-learning-algorithm-models-to-predict-the-stock-prices">Source</a>
 
@@ -1554,16 +1556,16 @@ library(caretEnsemble)
 
 windowedmL <- function(df,wind=100,rv="Diff",...){ # df is data, wind= window, rv =  response variable name (character), ... = vectors of indicator columns (name as used in mutate)
   alli <- 101:nrow(df)
-  data.tr <- select(df,...)
-  cl <- makeCluster(detectCores()-1)
-  registerDoParallel(cl)
-  getDoParWorkers()
+  data.tr <- dplyr::select(df,...)
+  cl <- parallel::makeCluster(parallel::detectCores()-1)
+  doParallel::registerDoParallel(cl)
+  foreach::getDoParWorkers()
   sapply(alli,data.tr=data.tr,rv=rv,function(i,data.tr,rv){
     ind <- rev(seq(i,i-wind))
     data.tr <- data.tr[ind,]
     req.packages <- c("caret","doParallel","iterators","parallel","foreach") # [package dependencies]
   startPkgs <- Vectorize(FUN=function(pkg){suppressPackageStartupMessages(library(pkg,character.only = T))})
-  startPkgs(req.packages)
+  HDA::startPkgs(req.packages)
   sysT.mod <- system.time({ #[model name]
   data.train <- caret::createDataPartition(data.tr[[rv]], times = 1, p=.85) #[Data] & [y-var]
   data.train <- caret::trainControl(method="repeatedcv",
@@ -1577,7 +1579,7 @@ windowedmL <- function(df,wind=100,rv="Diff",...){ # df is data, wind= window, r
                              classProbs=T, 
                              savePredictions = "final",
                              returnResamp = "final")
-  form <- as.formula(paste0("Diff"," ~ .")) #[y-var]
+  form <- stats::as.formula(paste0("Diff"," ~ .")) #[y-var]
   
   mod <- caretEnsemble::caretList(form = form, # [model name]
                                        data = data.tr,
@@ -1596,9 +1598,9 @@ windowedmL <- function(df,wind=100,rv="Diff",...){ # df is data, wind= window, r
   
   
 
-  stopCluster(cl):registerDoSEQ()
+  parallel::stopCluster(cl):foreach::registerDoSEQ()
   unloadPkgs <- Vectorize(FUN=function(pkg){detach(pkg,character.only = T)})
-  unloadPkgs(req.packages)
+  HDA::unloadPkgs(req.packages)
   
 }
 ```
@@ -1608,26 +1610,26 @@ windowedmL <- function(df,wind=100,rv="Diff",...){ # df is data, wind= window, r
 library(tidyquant)
 lapply(seq_along(TS.adxsar),TS=TS.adxsar,FUN=function(i,TS){
   nm <- names(TS)[i]
-  TS[[i]] %>% filter(time > lubridate::ymd("2017-05-01") & time < lubridate::ymd("2017-05-31")) %>% ggplot(data=.,aes(x = time, y = close)) +
-    geom_candlestick(aes(open = open, high = high, low = low, close = close),size=.3) +
-    geom_point(aes(y=sar,shape=sar.i),size=.7)+
-    geom_vline(data=function(x){x %>% filter(Action == "buy")},aes(xintercept=time),color="blue")+
-  geom_vline(data=function(x){x %>% filter(Action == "sell")},aes(xintercept=time),color="red")+
-    labs(title = "GOOG", 
+  TS[[i]] %>% dplyr::filter(time > lubridate::ymd("2017-05-01") & time < lubridate::ymd("2017-05-31")) %>% ggplot2::ggplot(data=.,ggplot2::aes(x = time, y = close)) +
+    tidyquant::geom_candlestick(ggplot2::aes(open = open, high = high, low = low, close = close),size=.3) +
+    ggplot2::geom_point(ggplot2::aes(y=sar,shape=sar.i),size=.7)+
+    ggplot2::geom_vline(data=function(x){x %>% dplyr::filter(Action == "buy")},ggplot2::aes(xintercept=time),color="blue")+
+  ggplot2::geom_vline(data=function(x){x %>% dplyr::filter(Action == "sell")},ggplot2::aes(xintercept=time),color="red")+
+    ggplot2::labs(title = "GOOG", 
          y = "Closing Price", x = "Time")+
-  theme_tq()+
-  scale_shape_manual(values=c(buy=24,sell=25,none=20))
+  tidyquant::theme_tq()+
+  ggplot2::scale_shape_manual(values=c(buy=24,sell=25,none=20))
   #ggplot2::ggsave(filename=paste0(nm,"ts.pdf"),plot=last_plot(), path="C:\\Users\\Stephen\\Documents\\Northeastern\\Git\\ppua5302\\Project 3\\Plots",device = "pdf",width = 10.5/2, height = 4, units = "in")
 })
-TS.adxsar$GOOG%>% filter(time > lubridate::ymd("2017-05-01") & time < lubridate::ymd("2017-05-31")) %>% ggplot(data=.,aes(x = time, y = close)) +
-    geom_candlestick(aes(open = open, high = high, low = low, close = close),size=.3) +
-    geom_point(aes(y=sar,shape=sar.i),size=.7)+
-    geom_vline(data=function(x){x %>% filter(Action == "buy")},aes(xintercept=time),color="blue")+
-  geom_vline(data=function(x){x %>% filter(Action == "sell")},aes(xintercept=time),color="red")+
-    labs(title = "GOOG", 
+TS.adxsar$GOOG%>% dplyr::filter(time > lubridate::ymd("2017-05-01") & time < lubridate::ymd("2017-05-31")) %>% ggplot2::ggplot(data=.,ggplot2::aes(x = time, y = close)) +
+    tidyquant::geom_candlestick(ggplot2::aes(open = open, high = high, low = low, close = close),size=.3) +
+    ggplot2::geom_point(ggplot2::aes(y=sar,shape=sar.i),size=.7)+
+    ggplot2::geom_vline(data=function(x){x %>% dplyr::filter(Action == "buy")},ggplot2::aes(xintercept=time),color="blue")+
+  ggplot2::geom_vline(data=function(x){x %>% dplyr::filter(Action == "sell")},ggplot2::aes(xintercept=time),color="red")+
+    ggplot2::labs(title = "GOOG", 
          y = "Closing Price", x = "Time")+
-  theme_tq()+
-  scale_shape_manual(values=c(buy=24,sell=25,none=20))
+  tidyquant::theme_tq()+
+  ggplot2::scale_shape_manual(values=c(buy=24,sell=25,none=20))
 ```
 
 
@@ -1682,10 +1684,10 @@ TS.indicators <- lapply(TS.indicators,FUN=function(l){
 
 # ----------------------- Thu Apr 19 06:08:57 2018 ------------------------#
 # Now we have some solid indicators to work with.
-lapply(TS.indicators,FUN=function(l){ggplot(data = l,mapping=aes(x=date))+
-  geom_errorbar(aes(ymin=low,ymax=high),color='blue')+
-    geom_point(aes(y=`1_10.sar`,color=`1_10.ind`),size=.2,shape=24,alpha=.5)+
-    geom_point(aes(y=`2_20.sar`,color=`2_20.ind`),size=.2,shape=8)})
+lapply(TS.indicators,FUN=function(l){ggplot2::ggplot(data = l,mapping=ggplot2::aes(x=date))+
+  ggplot2::geom_errorbar(ggplot2::aes(ymin=low,ymax=high),color='blue')+
+    ggplot2::geom_point(ggplot2::aes(y=`1_10.sar`,color=`1_10.ind`),size=.2,shape=24,alpha=.5)+
+    ggplot2::geom_point(ggplot2::aes(y=`2_20.sar`,color=`2_20.ind`),size=.2,shape=8)})
 ```
 
 
@@ -1693,7 +1695,7 @@ lapply(TS.indicators,FUN=function(l){ggplot(data = l,mapping=aes(x=date))+
 
 ```{r 'Apply ADX Indicator'}
 TS.indicators %<>%  lapply(FUN=function(l){
-  l %<>% rowwise %>% mutate(ADX.ind=siADX(ADX,DX,SMA28,DIp,DIn,close))
+  l %<>% rowwise %>% dplyr::mutate(ADX.ind=siADX(ADX,DX,SMA28,DIp,DIn,close))
 })
 ## 4/20/2018 9:32:05 AM
 # Create a buy or sell signal based on each indicator. When the come into agreement, master signal column shows buy/sell signal. 
@@ -1722,7 +1724,7 @@ siRSI <- function(RSI,SMA28,SMA100,close) {
 
 ```{r 'Apply RSI Indicator'}
 TS.indicators %<>%  lapply(FUN=function(l){
-  l %<>% rowwise %>%  mutate(RSI.ind=siRSI(RSI=RSI14,SMA28=SMA28,SMA100=SMA100,close=close))
+  l %<>% rowwise %>%  dplyr::mutate(RSI.ind=siRSI(RSI=RSI14,SMA28=SMA28,SMA100=SMA100,close=close))
 })
 
 ```
@@ -1734,7 +1736,7 @@ siTDI <- function(tdi,di){
 ```
 ```{r 'Apply TDI'}
 TS.indicators %<>%  lapply(FUN=function(l){
-  l %<>% rowwise %>%  mutate(TDI.ind=siTDI(tdi=tdi,di=di))
+  l %<>% rowwise %>%  dplyr::mutate(TDI.ind=siTDI(tdi=tdi,di=di))
 })
 ```
 
@@ -1774,16 +1776,16 @@ siBS.SAR <- function(sar1,sar2,adx.ind){
 ```
 ```{r 'Apply Buy Sell Indicator'}
 TS.indicators %<>%  lapply(FUN=function(l){
-  l %<>% rowwise %>%  mutate(BS.ind=siBS(sar.ind1=`2_20.ind`,sar.ind2=`1_10.ind`,adx.ind=ADX.ind,rsi.ind=RSI.ind,macd.ind=macd,tdi.ind=TDI.ind,verbose=F))
+  l %<>% rowwise %>%  dplyr::mutate(BS.ind=siBS(sar.ind1=`2_20.ind`,sar.ind2=`1_10.ind`,adx.ind=ADX.ind,rsi.ind=RSI.ind,macd.ind=macd,tdi.ind=TDI.ind,verbose=F))
 })
 TS.indicators %<>%  lapply(FUN=function(l){
-  l %<>% rowwise %>%  mutate(BS.ind=siBS.SAR(sar1=`2_20.ind`,sar2=`1_10.ind`,adx.ind=ADX.ind))
+  l %<>% rowwise %>%  dplyr::mutate(BS.ind=siBS.SAR(sar1=`2_20.ind`,sar2=`1_10.ind`,adx.ind=ADX.ind))
 })
 ```
 
 ```{r 'Backtest BS Indicator for 2017'}
 TS.GOOG <- TS.indicators[["GOOG"]][lubridate::year(TS.indicators[["GOOG"]]$date) == 2017,]
-subtract(TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% max},]$close,TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% min},]$close) # Overall growth during 2017
+magrittr::subtract(TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% max},]$close,TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% min},]$close) # Overall growth during 2017
 # which(TS.GOOG$BS.ind == "buy")
 # which(TS.GOOG$BS.ind == "buy")[which(diff(which(TS.GOOG$BS.ind == "buy")) > 1)] 
 # which(TS.GOOG$BS.ind == "sell")
@@ -1791,11 +1793,11 @@ subtract(TS.GOOG[TS.GOOG$date == {TS.GOOG$date %>% max},]$close,TS.GOOG[TS.GOOG$
 cps <- rle(TS.GOOG$BS.ind)
 ind <- cumsum(cps$lengths)+1
 df.Action <- data.frame(Action=ifelse(cps$values=="sell","buy","sell"),Index=ind)
-df.Action %<>% mutate(Date=TS.GOOG[ind,]$date,Price=TS.GOOG[ind,]$close)
+df.Action %<>% dplyr::mutate(Date=TS.GOOG[ind,]$date,Price=TS.GOOG[ind,]$close)
 {df.Action[df.Action$Action == "buy",]-df.Action[df.Action$Action == "sell",]} %>% .$Price %>% sum(na.rm = T)
 ```
 Citations
-Data provided for free by <a href="https://iextrading.com/developer" target="_blank">IEX</a>. View <a href="https://iextrading.com/api-exhibit-a/" target="_blank">IEX’s Terms of Use</a>.
+Data provided for free by <a href="https://iextrading.com/developer" target="_blank">IEX</a>. View <a href="https://iextrading.com/api-exhibit-a/" target="_blank">IEXâ€™s Terms of Use</a>.
 
 
 ### Appendix
@@ -1836,17 +1838,17 @@ TS.adxsar <- POS$Symbol %>% as.character %>% sapply(FUN=function(sym){QuantTools
 # }) # Remove ADX
 # Add ADX
 TS.adxsar %<>%  lapply(FUN=function(l){
-  cbind(l,TTR::ADX(l[,c("high","low","close")],n=20)) %>% rename(ADXv=ADX)
+  cbind(l,TTR::ADX(l[,c("high","low","close")],n=20)) %>% dplyr::rename(ADXv=ADX)
 })
 
 ```
 ```{r 'YTD 2018 Linear Regression Models'}
 lms <- lapply(TS.adxsar, function(l){
-  if(str_detect(names(l),"time") == T){
-  l <- l %>% mutate("date" = lubridate::as_date(time)) %>% group_by(date) %>%  summarize_all(.funs = mean) %>% mutate_if(.predicate = is.numeric, .funs = scale)
+  if(stringr::str_detect(names(l),"time") == T){
+  l <- l %>% dplyr::mutate("date" = lubridate::as_date(time)) %>% dplyr::group_by(date) %>%  dplyr::summarize_all(.funs = mean) %>% dplyr::mutate_if(.predicate = is.numeric, .funs = scale)
   }
-  ytd  <- l %>% filter(date > lubridate::ymd("2018-01-01"))
-  glm(close ~ date, data = ytd, family = "gaussian")
+  ytd  <- l %>% dplyr::filter(date > lubridate::ymd("2018-01-01"))
+  stats::glm(close ~ date, data = ytd, family = "gaussian")
 })
 lapply(lms,summary) %>% lapply(purrr::pluck("coefficients"))
 ```
@@ -1922,11 +1924,11 @@ Positions_ts %<>% lapply(wind = wind, verbose = T, function(l, wind, verbose){
       ras <- zoo::rollapplyr(dat[,c(cl_nm, sa_nm)], width = .x, align = "left", by.column = F, env = parent.frame(), na.pad = T, partial = T, function(r, env){
         if (!is.na(which(r[, 2] == -1)[1])) s <- which(r[, 2] == -1)[1] else s <- numeric(0)
         if(verbose == T) print(s)
-        p <- quantmod::findPeaks(r[, 1], thresh = sd(r[1]))
-        v <- quantmod::findValleys(r[, 1], thresh = sd(r[1]))
+        p <- quantmod::findPeaks(r[, 1], thresh = stats::sd(r[1]))
+        v <- quantmod::findValleys(r[, 1], thresh = stats::sd(r[1]))
         if (length(s) != 0) i <- s[1] else if (length(p) != 0) i <- p[1] else if (length(v) != 0) i <- v[1] else i <- .x
         if(verbose == T) print(i)
-        out <- {coredata(r[i, 1]) - coredata(r[1, 1])}
+        out <- {zoo::coredata(r[i, 1]) - zoo::coredata(r[1, 1])}
         if(verbose == T) print(out)
         return(out)
       })
@@ -1937,12 +1939,12 @@ Positions_ts %<>% lapply(wind = wind, verbose = T, function(l, wind, verbose){
       while (n < end) {
         # Use the SAR as the Sell point first, Which returns index within n:na_ind, so to get the actual index it needs to be used as a subset of n:end
         if (!is.na(which(dat[n:end, sa_nm] == -1)[1])) s <- c(n:end)[which(dat[n:end, sa_nm] == -1)[1]] else s <- numeric(0)
-        p <- c(n:end)[quantmod::findPeaks(dat[n:end, cl_nm], thresh = sd(dat[n:end, cl_nm]))]
-        v <- c(n:end)[quantmod::findValleys(dat[n:end, cl_nm], thresh = sd(dat[n:end, cl_nm]))]
+        p <- c(n:end)[quantmod::findPeaks(dat[n:end, cl_nm], thresh = stats::sd(dat[n:end, cl_nm]))]
+        v <- c(n:end)[quantmod::findValleys(dat[n:end, cl_nm], thresh = stats::sd(dat[n:end, cl_nm]))]
         if(verbose == T) print(c(s=s,p=p,v=v))
         if (length(s) != 0) i <- s[1] else if (length(p) != 0) i <- p[1] else if (length(v) != 0) i <- v[1] else i <- end
         if(verbose == T) print(i)
-        ras[n] <- {coredata(dat[i, cl_nm]) - coredata(dat[n, cl_nm])}
+        ras[n] <- {zoo::coredata(dat[i, cl_nm]) - zoo::coredata(dat[n, cl_nm])}
         n <- n + 1
       }
       ras[n] <- 0
@@ -1974,8 +1976,8 @@ sar.i <- TS.adxsar[["GOOG"]]$sar.i
 ```
 ```{r 'Apply ADXSAR Indicator'}
 TS.adxsar  %<>% lapply(FUN=function(l){
-  if(any(names(l) %in% "ADXSAR.i")){l %<>% select(- ADXSAR.i)}
-  l %>% mutate(ADXSAR.i=ADXSAR.i(sar.ind=sar.i,adx.ind=adx.i))
+  if(any(names(l) %in% "ADXSAR.i")){l %<>% dplyr::select(- ADXSAR.i)}
+  l %>% dplyr::mutate(ADXSAR.i=ADXSAR.i(sar.ind=sar.i,adx.ind=adx.i))
 })
 ```
 ```{r 'Compute Buy and Sell Points'}
@@ -1989,7 +1991,7 @@ ind <- cumsum(bs.rle$lengths)+1
 ind[length(ind)] <- ind[length(ind)]-1
 b.ind <- which(bs.rle$values == "sell") # The buy indexes come when the rle value changes, so a buy is indicated by sell
 s.ind <- which(bs.rle$values == "buy") # and vice versa
-l %<>% mutate(Action=NA)
+l %<>% dplyr::mutate(Action=NA)
 l$Action[ind[s.ind]] <- rep("sell",length(s.ind))
 l$Action[ind[b.ind]] <- rep("buy",length(b.ind))
 
@@ -2016,7 +2018,7 @@ purrr::map2(.x = TS.adxsar, T)
 # ----------------------- Thu Apr 26 11:36:55 2018 ------------------------#
 # Join the buy points with the loss or gain per period and see if there are patterns
 {TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]} %>% length
-TS.adxsar$GOOG %>% filter(Action=="buy") %>% select(time,PR,sar,ADXv,DX,Diff,sar.i) %>% cbind(G.L={TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]}) %>% lm(G.L ~ ., data=.) %>% summary
+TS.adxsar$GOOG %>% dplyr::filter(Action=="buy") %>% dplyr::select(time,PR,sar,ADXv,DX,Diff,sar.i) %>% cbind(G.L={TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "sell","close"] - TS.adxsar.signals$GOOG[TS.adxsar.signals$GOOG$action == "buy","close"]}) %>% stats::lm(G.L ~ ., data=.) %>% summary
 
 ```
 
@@ -2045,8 +2047,8 @@ dopC  <- lapply(wind,function(tp,cl = clos, verbose = v){
     if(i-win < 1){ind <- 1}else {ind <- i-win} # Cases where the lag falls outside the time window
     if(.verb==T){print(i);print(c(.cl[ind],.cl[i]))}
    }else if(lubridate::is.duration(win)){
-     if(time(.cl)[i] - win < time(.cl)[1]){ind <- 1}else {ind <- which(abs(time(.cl)-(time(.cl)[i] - win)) == min(abs(time(.cl) - (time(.cl)[i] - win))))[1]} # Cases where the lag falls outside the time window
-      if(.verb==T){print(time(.cl)[i])}
+     if(stats::time(.cl)[i] - win < stats::time(.cl)[1]){ind <- 1}else {ind <- which(abs(stats::time(.cl)-(stats::time(.cl)[i] - win)) == min(abs(stats::time(.cl) - (stats::time(.cl)[i] - win))))[1]} # Cases where the lag falls outside the time window
+      if(.verb==T){print(stats::time(.cl)[i])}
    }
     out <- (.cl[[ind]]-.cl[[i]])/.cl[[ind]]
     if(is.na(out)){out <- 0}
@@ -2055,7 +2057,7 @@ dopC  <- lapply(wind,function(tp,cl = clos, verbose = v){
 })
 
   
- if(is.duration(wind)){nm <- paste0("pC",wind %>% str_extract("(?<=\\(\\~)[\\s[:alnum:]\\.]+"))}else{nm <- paste0("pC",wind)}
+ if(lubridate::is.duration(wind)){nm <- paste0("pC",wind %>% stringr::str_extract("(?<=\\(\\~)[\\s[:alnum:]\\.]+"))}else{nm <- paste0("pC",wind)}
 nm %<>% make.names
   out <- cbind(d.f,do.call("cbind",dopC))
   names(out)[(dim(out)[2]-(length(dopC)-1)):dim(out)[2]] <- nm
@@ -2077,11 +2079,11 @@ sDxts <- function(cl,wind = 5,verbose=F){
       if(i-wind < 1){ind <- 1}else {ind <- i-wind}
       if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
     }else if(lubridate::is.duration(wind)){
-      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
-      if(verbose==T){time(cl)[i]}
+      if(stats::time(cl)[i] - wind < stats::time(cl)[1]){ind <- 1}else {ind <- which(stats::time(cl)[i] - wind == stats::time(cl))}
+      if(verbose==T){stats::time(cl)[i]}
     }
   cl %<>% scale
-  out <- sd(cl[c(seq(i,ind))],na.rm = T)
+  out <- stats::sd(cl[c(seq(i,ind))],na.rm = T)
   if(is.na(out)){out <- 0}
 return(out)
   })
@@ -2097,8 +2099,8 @@ pRise <- function(cl,wind,verbose=F){
       if(i-wind < 1){ind <- 1}else {ind <- i-wind}
       if(verbose==T){print(i);print(c(cl[ind],cl[i]))}
     }else if(lubridate::is.duration(wind)){
-      if(time(cl)[i] - wind < time(cl)[1]){ind <- 1}else {ind <- which(time(cl)[i] - wind == time(cl))}
-      if(verbose==T){time(cl)[i]}
+      if(stats::time(cl)[i] - wind < stats::time(cl)[1]){ind <- 1}else {ind <- which(stats::time(cl)[i] - wind == stats::time(cl))}
+      if(verbose==T){stats::time(cl)[i]}
     }
    out <- cl[c(seq(i,ind))] %>% rev() %>% diff() %>% sign() %>% table() %>% prop.table() %>% .["1"]
    if(is.na(out)){return(0)} # Account for no rise
@@ -2165,14 +2167,14 @@ TS.adxsar %>% lapply(ns=c(dy=7,wk=35,mc=140,qu=420),FUN=function(l,ns){
 ```
 ## Costbasis used for 2018 Taxes
 ```{r 'Calculating Cost Basis'}
-CostBasis18 <- read.csv("~/R/Quant/PortfolioCostBasis2018-07-09.csv")
+CostBasis18 <- utils::read.csv("~/R/Quant/PortfolioCostBasis2018-07-09.csv")
 # ----------------------- Mon Jul 09 19:09:54 2018 ------------------------#
 # Clean Data
 sapply(CostBasis18, class)
 CostBasis18[, c("Date.Sold","Date.Acquired")] %<>% lapply(FUN=lubridate::dmy)
-CostBasis18 %<>% rename(`Gain.Loss.Pct` = `Gain.Loss..`)
+CostBasis18 %<>% dplyr::rename(`Gain.Loss.Pct` = `Gain.Loss..`)
 CostBasis18_Net[, c("Proceeds","Cost.per.Share","Cost","Gain.Loss","Gain.Loss.Pct")] %<>% lapply(.,FUN=function(x)gsub("\\$|\\,|\\%","",x)) %>% lapply(as.numeric)
 # ----------------------- Mon Jul 09 20:01:34 2018 ------------------------#
 # Portfolio Returns YTD 2018
-CostBasis18 %>% group_by(Symbol) %>% summarise_at(.vars = c("Quantity","Cost","Proceeds","Cost.per.Share","Gain.Loss","Gain.Loss.Pct"), .funs = sum) %<>% mutate(Wgt = {Cost/sum(CostBasis18$Cost)}) %>% mutate(W.Yld = Wgt * Gain.Loss.Pct)
+CostBasis18 %>% dplyr::group_by(Symbol) %>% dplyr::summarise_at(.vars = c("Quantity","Cost","Proceeds","Cost.per.Share","Gain.Loss","Gain.Loss.Pct"), .funs = sum) %<>% dplyr::mutate(Wgt = {Cost/sum(CostBasis18$Cost)}) %>% dplyr::mutate(W.Yld = Wgt * Gain.Loss.Pct)
 ```

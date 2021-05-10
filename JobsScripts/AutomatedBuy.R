@@ -28,7 +28,7 @@ Purchase$orders <- data.frame()
     # ----------------------- Mon Jul 15 13:54:30 2019 ------------------------#
     # Account for wash sale rule - See parameters.R AlpacatoR_order_mutate for rest of code
     #TODO Need to link wash sale buys with losing sales to prevent double counting via the same order_type id concatenation.
-    Orders_ws <- Orders %>% filter(symbol == s & side == "sell" & GL < 0 & filled_at >= {lubridate::now() - lubridate::days(30)} & !stringr::str_detect(order_type, "ws"))
+    Orders_ws <- Orders %>% dplyr::filter(symbol == s & side == "sell" & GL < 0 & filled_at >= {lubridate::now() - lubridate::days(30)} & !stringr::str_detect(order_type, "ws"))
     if (nrow(Orders_ws) > 0) {
       ws <- abs(sum(Orders_ws$GL))
       wso <- paste0(Orders_ws$id, collapse = ",")

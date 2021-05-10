@@ -24,11 +24,11 @@ source("~/R/Quant/JobsScripts/AddRVstoNewData.R", local = T)
 source("~/R/Quant/JobsScripts/ApplyModelstoNewData.R", local = T)
 library(htmltools)
 preds <- purrr::map(dat, function(.x){
-  .out <- head(.x, 10) %>% dplyr::select(dplyr::ends_with("pred")) %>% dplyr::mutate_if(.pred = ~ is.numeric(.), ~ round(.,4))})
+  .out <- utils::head(.x, 10) %>% dplyr::select(dplyr::ends_with("pred")) %>% dplyr::mutate_if(.pred = ~ is.numeric(.), ~ round(.,4))})
 
 # Create logical subset of those stocks where the prediction exceeds the percentage gain threshold
 .thresh <- purrr::map2(dat, best_tsl[names(dat)], function(.x, .y){
-  .df <- head(.x, 10)
+  .df <- utils::head(.x, 10)
   .lgl <- purrr::map2_lgl(.y[['tsl_types']][['pct']], .y[['tsl_types']][['tsl']], .df = .df, function(.x, .y, .df){
     any(xts::last(.df)[[paste0(.y,"_rv_pred")]] > .x)
   }) 
@@ -36,13 +36,13 @@ preds <- purrr::map(dat, function(.x){
 }) %>% purrr::map(~ any(.)) %>% unlist
 # Create a vector of RMSE values of the predictions vs the actual tsl values
 .rmse <- purrr::map2(dat[.thresh], best_tsl[names(dat[.thresh])], function(.x, .y){
-  .df <- head(.x, 10)
+  .df <- utils::head(.x, 10)
   .rmse <- purrr::map_dbl(.y[['tsl_types']][['tsl']], .df = .df, function(.x, .df){
     caret::RMSE(.df[[paste0(.x,"_rv_pred")]], .df[[paste0(.x, "_rv")]])
   }) 
   return(.rmse)
 })
-.sort <- .rmse %>% purrr::map(~ pluck(., 1)) %>% unlist %>% sort() %>% names
+.sort <- .rmse %>% purrr::map(~ dplyr::pluck(., 1)) %>% unlist %>% sort() %>% names
 
 if (length(.sort) > 0) {
   HDA::startPkgs(c("htmltools"))
@@ -50,9 +50,9 @@ if (length(.sort) > 0) {
   bdy <- tags$body(
     tags$table(
       tags$tr(tags$thead(purrr::map(names(preds[.sort]), ~ tags$td(.,colspan = 2)))),
-      tags$tr(purrr::map(best_tsl[.sort], ~ .x[['tsl_types']] %>% select(tsl, pct, `75%max`)) %>% purrr::map2(.rmse[.sort], ~ tagList(tags$td(paste0(.x[1,1], ": ", .x[1,2], "\n 75%: ", round(.[1,3],2),"\n RMSE: ",round(.y[1],3))), tags$td(paste0(.[2,1], ": ", .[2,2], "\n75%: ", round(.[2,3],2),"\n RMSE: ",round(.y[2],3))))))
+      tags$tr(purrr::map(best_tsl[.sort], ~ .x[['tsl_types']] %>% dplyr::select(tsl, pct, `75%max`)) %>% purrr::map2(.rmse[.sort], ~ htmltools::tagList(tags$td(paste0(.x[1,1], ": ", .x[1,2], "\n 75%: ", round(.[1,3],2),"\n RMSE: ",round(.y[1],3))), tags$td(paste0(.[2,1], ": ", .[2,2], "\n75%: ", round(.[2,3],2),"\n RMSE: ",round(.y[2],3))))))
       ,
-      tags$tr(preds[.sort] %>% purrr::map(~ head(.x, 10)) %>% purrr::map(~ tags$td(HTML(knitr::kable(.x, format = "html")), colspan = 2)))
+      tags$tr(preds[.sort] %>% purrr::map(~ utils::head(.x, 10)) %>% purrr::map(~ tags$td(htmltools::HTML(knitr::kable(.x, format = "html")), colspan = 2)))
     )
   )
   # For later use to send via Twilio
@@ -62,7 +62,7 @@ if (length(.sort) > 0) {
   buy_msg <- gmailr::mime(From="sholsen@alumni.emory.edu",
              To="7818797492@vtext.com;sholsen@alumni.emory.edu",
              subject = "R: Buy Options") %>%
-    gmailr::html_body(body = doRenderTags(bdy))#%>% gmailr::attach_file("table.png")
+    gmailr::html_body(body = htmltools::doRenderTags(bdy))#%>% gmailr::attach_file("table.png")
   gmailr::send_message(buy_msg)
 
   # Give a 30 min window to solicit a response, checking each minute

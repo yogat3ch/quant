@@ -2,11 +2,8 @@
 # Tue Aug 25 11:54:03 2020
 params <- qf:::params
 # see qf/R/general.R for parameters to update
-if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
-  db <- qf::get_data("db", "hours")
-}
 
-
+db <- qf::get_data("db", "hours")
 
 
 
@@ -28,7 +25,7 @@ params$paths <- list(Positions_tsl = "~/R/Quant/Positions_tsl2019-09-02.Rdata",
                      Positions_ts_rv_iv = "~/R/Quant/Positions_ts_rv_iv2015-07-27_2019-07-16.Rdata",
                      Positions_new = "~/R/Quant/Positions_new.Rdata",
                      best_tsl = "~/R/Quant/best_tsl.Rdata")
-
+params$tbls <- DBI::dbListTables(db)
 # Read the columns from the Orders sheet in their appropriate classes
 params$Orders_cols <- c(
   Platform = 'c',
