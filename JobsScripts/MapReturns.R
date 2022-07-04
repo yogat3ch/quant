@@ -1,7 +1,5 @@
-
-`%>%` <- magrittr::`%>%`
-`!!!` <- rlang::`!!!`
-`!!` <- rlang::`!!`
+library(qf)
+options(error = qf::pb_error)
 calling.script <- basename(purrr::keep(stringr::str_extract(commandArgs(trailingOnly = FALSE), "(?<=script\\s\\=\\s\\')[A-Za-z0-9\\/\\:\\.\\_]+"),~!is.na(.x)))
 message(paste0(calling.script, ": ", lubridate::now(),"\nlocation: ",getwd()))
 # Load New Data
@@ -30,12 +28,12 @@ ret <- furrr::future_imap(dat, ~cl$catch({
       rv <- .d[[paste0(.x,"_rv")]]
       ind <- .d[[paste0(.x, "_ind")]]
       # get 10% of the time points with positive gains
-      .rp <- range(rv[rv > 0] %>% .[1:(length(.) %/% 10)])
-      if (length(.rp) == 0) return(NULL)
+      .rp <- range(rv[rv > 0] %>% .[1:(length(.) %/% 10)], na.rm = TRUE)
+      if (any(is.na(.rp)) || any(is.infinite(.rp))) return(NULL)
       .qt <- .rp %>%
         # create ten even gaps for a total of 11 thresholds 
         {seq(.[1], .[2], by = abs(diff(.)) / 10)} %>% 
-        setNames(nm = paste0("p",.))
+        stats::setNames(nm = paste0("p",.))
       qf::iMessage(paste0(lubridate::now(), ": Begin ", .sym,":",.tsl))
       out <- purrr::map(.qt, ~{
         .out <- qf::optimReturn(.d, tsl_name = .tsl, .p = .x)
