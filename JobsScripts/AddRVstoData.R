@@ -7,9 +7,9 @@ qf::iMessage(paste0(calling.script, ": ", lubridate::now(),"\nlocation: ",getwd(
 # Load New Data
 if (stringr::str_detect(deparse(sys.calls()[[sys.nframe()-1]]), "sourceEnv")) {
   qf::iMessage("Sourced from Local Job, loading dependencies")
-  load(qf::wd("data/input_rv.Rdata"))
+  load("~/R/Quant/data/input_rv.Rdata")
 }
-source(qf::wd("JobsScripts/parameters.R"))
+source("~/R/Quant/JobsScripts/parameters.R")
 if (!exists(".add", mode = "logical")) .add <- F
 TSLvars <- params$TSLvars
 db <- qf::get_data("db")
@@ -24,8 +24,8 @@ purrr::iwalk(dat, ~{
   .ohlcvt <- qf::ohlcvt(.d)
   .runtime <- system.time({
   if (any(is.na(.d[.ohlcvt[c("h","l","c","o")]]))) {
-    .mice <- mice::mice(.d[.ohlcvt[c("h","l","c","o")]], m = 1, threshold = 1)
-    .d[, .ohlcvt[c("h","l","c","o")]] <- mice::complete(.mice)
+    .miceFast <- miceFast::mice(.d[.ohlcvt[c("h","l","c","o")]], m = 1, threshold = 1)
+    .d[, .ohlcvt[c("h","l","c","o")]] <- miceFast::complete(.mice)
   }
     qf::iMessage(paste0(lubridate::now(), ": Begin ", .sym))
     .has_rvs <- any(purrr::imap_lgl(names(TSLvars), ~{any(grepl(.y, names(.d), fixed = TRUE))}))
@@ -45,7 +45,7 @@ purrr::iwalk(dat, ~{
       )
       .args <- list(.d = .d[.ohlcvt],
                     tsl = tsl)
-        .rvs <- setNames(do.call(qf::TSL, .args), .nms)
+        .rvs <- stats::setNames(do.call(qf::TSL, .args), .nms)
       qf::iMessage(paste0(lubridate::now(), ": ", .sym, " ", .y," complete"))
       .rvs
     }
@@ -58,10 +58,11 @@ purrr::iwalk(dat, ~{
     .t <- .ohlcvt[c("t")]
     .ts <- rlang::sym(.t)
     .out <- dplyr::bind_cols(.d[.t],.out)
-    if (RSQLite::dbExistsTable(db, .tbl)) {
+    if (DBI::dbExistsTable(db, .tbl)) {
       # retrieve data already in the db
-      .in_p <- dplyr::mutate_at(RSQLite::dbReadTable(db, .tbl), dplyr::vars(!!.ts, dplyr::ends_with("_ind")), lubridate::as_datetime, tz = "America/New_York")
-      if (!all(names(.in_p) %in% names(.out))) {
+      .in_p <- dplyr::mutate_at(DBI::dbReadTable(db, .tbl), dplyr::vars(!!.ts, dplyr::ends_with("_ind")), lubridate::as_datetime, tz = "America/New_York")
+      if (!all(names(.in_p) %in% names(.out)) || .in_p[[.t]][1] > .out[[.t]][1]) {
+        # if the columns aren't the same or out has data preceding that in the database
         .overwrite <- TRUE
         .append <- FALSE
         .in <- .out
@@ -71,12 +72,17 @@ purrr::iwalk(dat, ~{
         .na_1 <- min(which(slider::slide_lgl(.in_p, ~any(is.na(.x)))))
         .t_del <- paste0(as.numeric(.in_p[[.t]][.na_1:nrow(.in_p)]), collapse = ", ")
         .q <- glue::glue("DELETE FROM {.tbl} WHERE {.t} IN ({.t_del})")
-        RSQLite::dbExecute(db, .q)
-        .in <- dplyr::filter(!!.ts >= !!.in_p[[.t]][.na_1])
-      }
+        DBI::dbExecute(db, .q)
+        .in <- dplyr::filter(.out, !!.ts >= !!.in_p[[.t]][.na_1])
+      } 
+    } else {
+      .in <- .out
+      .append <- FALSE
+      .overwrite = TRUE
+      
     } 
     # Update rows
-      RSQLite::dbWriteTable(db, .tbl, as.data.frame(.in), append = .append, overwrite = .overwrite)
+      DBI::dbWriteTable(db, .tbl, as.data.frame(.in), append = .append, overwrite = .overwrite)
       qf::iMessage(paste0("RVs added to: ", basename(db@dbname)," ", .tbl))
 })
   qf::iMessage(paste0(.sym, " Elapsed: ",lubridate::as.duration(.runtime[3])))
