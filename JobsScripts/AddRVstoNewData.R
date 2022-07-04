@@ -17,7 +17,7 @@ nms <- names(dat)
 cl <- parallel:::makePSOCKcluster(6, outfile = "~/R/Quant/dopar.log") 
 doParallel::registerDoParallel(cl, cores = 6)
 run.time <- system.time({
-  dat <- foreach(x = dat, this_tsl = best_tsl[names(dat)], tsl_amt = purrr::map(1:length(dat), tsl_amt = attr(params$TSLvars, "tsl_amt"), function(.x, tsl_amt) {return(tsl_amt)}), .verbose = T,.inorder = T, .multicombine = T, .packages = c("quantmod","xts","rlang","magrittr","foreach")) %dopar% {
+  dat <- foreach::foreach(x = dat, this_tsl = best_tsl[names(dat)], tsl_amt = purrr::map(1:length(dat), tsl_amt = attr(params$TSLvars, "tsl_amt"), function(.x, tsl_amt) {return(tsl_amt)}), .verbose = T,.inorder = T, .multicombine = T, .packages = c("quantmod","xts","rlang","magrittr","foreach")) %dopar% {
     sym <- attr(x, "Sym")
     if (all(!is.na(quantmod::HLC(x))) ) {
 #TODO Rearrange based on new best_tsl input 2019-07-20 1059
@@ -37,9 +37,9 @@ run.time <- system.time({
       clm.nms <- c(rbind(nms, nms_ind))
       if (grep("rv",names(x)) %>% length > 0 & !add) x  <- x[, - grep("rv",names(x))] # Remove columns if add = F
       if (xts::is.xts(x)) {
-        rvs <- xts(rvs, order.by = time(x))
+        rvs <- xts::xts(rvs, order.by = stats::time(x))
         colnames(rvs) <-  clm.nms
-        out <- cbind.xts(rvs, x)
+        out <- xts::cbind.xts(rvs, x)
       } else {
         Time <-  tibbletime::get_index_col(x)
         x <- x[!names(x) %in% tibbletime::get_index_char(x)]
