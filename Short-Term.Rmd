@@ -179,7 +179,6 @@ dat_hr <- qf::get_data("raw", positions = qf::Positions_v, update = TRUE, begin 
 ```{r 'Retrieve hourly data from db and update'}
 # [which(names(Positions_v) == "EMNT"):length(Positions_v)]
 dat_hr <- qf::get_data("raw", positions = qf::Positions_v)
-
 ```
 
 ## Add Variables
@@ -278,8 +277,6 @@ dat_full <- qf::get_data("full", positions = AlpacaforR::watchlist("Primary")$sy
 ## Hyperparameter Tuning
 ```{r 'Tune Hyperparameters'}
 dat <- dat_full
-# Whether to save tuning grids. These take a long time to build and may be lost to an error before the function completes unless saved.
-save_intermediate = TRUE
 save(dat, file = "~/R/Quant/data/input_TuneHP.Rdata")
 rstudioapi::jobRunScript("~/R/Quant/JobsScripts/TuneHP.R", exportEnv = "R_GlobalEnv", importEnv = F, workingDir = getwd())
 ```

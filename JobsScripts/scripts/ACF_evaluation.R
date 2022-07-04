@@ -3,7 +3,7 @@ tidy_acf <- function(data, lags = 0:20) {
   value_expr <- rlang::sym(value)
   acf_values <- data %>%
     dplyr::pull(!!value) %>%
-    stats::acf(lag.max = tail(lags, 1), plot = FALSE) %>%
+    stats::acf(lag.max = utils::tail(lags, 1), plot = FALSE) %>%
     .$acf %>%
     .[,,1]
   
