@@ -44,13 +44,13 @@ all_orders <- AlpacaforR::get_orders(status = "all")
 # Add query to orders to get recently filled buy orders and update the sheet 
 Orders_unfilled <- Orders %>% dplyr::filter(Platform == "A" & is.na(filled_at) & ( status == "new" | status == "open") & side == "buy")
 if (nrow(Orders_unfilled) > 0) {
-  Orders_filled <- all_orders %>% filter(id %in% Orders_unfilled$id & status == "filled" & side == "buy")
+  Orders_filled <- all_orders %>% dplyr::filter(id %in% Orders_unfilled$id & status == "filled" & side == "buy")
   if (nrow(Orders_filled) > 0) {
     for (i in seq_along(Orders_filled$id)) {
       # Get the names of the common values to be joined on
-      merge_by_nms <- names(Orders_filled)[purrr::map2_lgl(Orders_filled,{Orders_unfilled[1, - c(names(Orders_unfilled) %in% setdiff(names(Orders_unfilled),names(Orders_filled)) %>% which)] %>% unclass},~ .x == .y) %>% which]
-      update_nms <- names(Orders_filled)[names(Orders_filled) %in% names(Orders_unfilled)][- {purrr::map2_lgl(Orders_filled,{Orders_unfilled[1, - c(names(Orders_unfilled) %in% setdiff(names(Orders_unfilled),names(Orders_filled)) %>% which)] %>% unclass},~ .x == .y) %>% which}]
-      filled_sales <- Orders_filled[i,] %>% left_join(Orders_unfilled[i,] %>% select(- update_nms), by = merge_by_nms) %>% select(Platform, everything()) %>% mutate(qty_remain = filled_qty)
+      merge_by_nms <- names(Orders_filled)[purrr::map2_lgl(Orders_filled,{Orders_unfilled[1, - c(names(Orders_unfilled) %in% dplyr::setdiff(names(Orders_unfilled),names(Orders_filled)) %>% which)] %>% unclass},~ .x == .y) %>% which]
+      update_nms <- names(Orders_filled)[names(Orders_filled) %in% names(Orders_unfilled)][- {purrr::map2_lgl(Orders_filled,{Orders_unfilled[1, - c(names(Orders_unfilled) %in% dplyr::setdiff(names(Orders_unfilled),names(Orders_filled)) %>% which)] %>% unclass},~ .x == .y) %>% which}]
+      filled_sales <- Orders_filled[i,] %>% dplyr::left_join(Orders_unfilled[i,] %>% dplyr::select(- update_nms), by = merge_by_nms) %>% dplyr::select(Platform, dplyr::everything()) %>% dplyr::mutate(qty_remain = filled_qty)
       filled_sales[, addtl_cols] <- Orders_unfilled[i,addtl_cols]
       # Replace the row in Google Sheets
       googlesheets::gs_edit_cells(params$gs, ws = "Orders", input = filled_sales, anchor = paste0("A",which(Orders$id == Orders_filled[i, "id"]) + 1),  col_names = F)
@@ -79,7 +79,7 @@ if (!HDA::go(open_shares)) stop(paste0(lubridate::now(), ": No open shares. Stop
 # Get the positions from Alpaca. Split it by the open shares according to the sheet, and name it according to those open_shares (such that the pmap below has named list items)
 open_positions <- AlpacaforR::get_positions(live = params$live) 
 if (HDA::go(open_positions)) {
-  open_positions %<>% split(., .[["symbol"]]) %>% .[names(open_shares)] %>% setNames(names(open_shares))
+  open_positions %<>% split(., .[["symbol"]]) %>% .[names(open_shares)] %>% stats::setNames(names(open_shares))
 }  
 # Get the subset of all Alpaca orders by symbol that googlesheets indicates are open
 A_open <- all_orders %>% dplyr::filter(symbol %in% names(open_shares)) %>% dplyr::select(- replaced_at, - replaced_by, - replaces)
@@ -102,13 +102,13 @@ sell_updates <- purrr::pmap(list(.o_s = open_shares, .a_o = split(A_open, A_open
 if (any(o_p.lgl)) {
   message("Updating orders...")
   # Get the previous time at which the stop loss was set
-  prev_tsl_time <- .a_o %>% dplyr::arrange(desc(created_at)) %>% filter(side == "sell" & type == "stop") %>% .[1, "created_at"]
+  prev_tsl_time <- .a_o %>% dplyr::arrange(dplyr::desc(created_at)) %>% dplyr::filter(side == "sell" & type == "stop") %>% .[1, "created_at"]
   # Get the alpaca sell orders that were filled since that last TSL was set
-  a_o_sell <- .a_o %>% filter(side == "sell" & status == "filled" & created_at >= prev_tsl_time) # Symbol is a given due to mapping
+  a_o_sell <- .a_o %>% dplyr::filter(side == "sell" & status == "filled" & created_at >= prev_tsl_time) # Symbol is a given due to mapping
   # Merge the sold order info with the order info already in TSL_placed and add the unique ID to match buy & sell orders
   merge_by_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][- {names(a_o_sell) %in% .m_n %>% which}]
   update_nms <- names(a_o_sell)[names(a_o_sell) %in% names(.o_o)][- {names(a_o_sell) %in% .m_n %>% which}]
-  filled_tsl <- a_o_sell %>% left_join(.o_o %>% select(- .u_n), by = .m_n) %>% select(Platform, everything()) %>% dplyr::mutate_at(dplyr::vars(Platform), ~ {.  <-  "A"})
+  filled_tsl <- a_o_sell %>% dplyr::left_join(.o_o %>% dplyr::select(- .u_n), by = .m_n) %>% dplyr::select(Platform, dplyr::everything()) %>% dplyr::mutate_at(dplyr::vars(Platform), ~ {.  <-  "A"})
   
   # ----------------------- Sun Aug 18 07:05:12 2019 ------------------------#
   #TODO Buy orders need to be matched to sell orders by the trailing stop loss type
@@ -117,22 +117,22 @@ if (any(o_p.lgl)) {
   # First In First Out Gain/Loss Calculation linking buys with sales
   if (tax == "fifo") {
   # get the cumulative sum of unsold bought share orders with it sorted by the oldest create date first, calculate the cum.sum (descending) 
-  o_ns_buy <- .o_o %>% filter(side == "buy" & status == "filled") %>% arrange(created_at) %>% mutate(cum.shares = cumsum(qty_remain))
+  o_ns_buy <- .o_o %>% dplyr::filter(side == "buy" & status == "filled") %>% dplyr::arrange(created_at) %>% dplyr::mutate(cum.shares = cumsum(qty_remain))
   } else if (tax == "lifo") {
     # if last in first out, sort by created at descending (recent first) and then add the cum.sum (descending)
-    o_ns_buy <- .o_o %>% filter(side == "buy" & status == "filled") %>% arrange(desc(created_at)) %>% mutate(cum.shares = cumsum(qty_remain)) 
+    o_ns_buy <- .o_o %>% dplyr::filter(side == "buy" & status == "filled") %>% dplyr::arrange(dplyr::desc(created_at)) %>% dplyr::mutate(cum.shares = cumsum(qty_remain)) 
   } else if (tax == "stts") {
     # if short term tax sensitive, sort desc by the filled_avg_price
-    o_ns_buy <- .o_o %>% filter(side == "buy" & status == "filled") %>% arrange(desc(filled_avg_price)) %>% mutate(cum.shares = cumsum(qty_remain)) 
+    o_ns_buy <- .o_o %>% dplyr::filter(side == "buy" & status == "filled") %>% dplyr::arrange(dplyr::desc(filled_avg_price)) %>% dplyr::mutate(cum.shares = cumsum(qty_remain)) 
   } else if (tax == "maxp") {
     # if max profit, sort ascending by the filled_avg price
-    o_ns_buy <- .o_o %>% filter(side == "buy" & status == "filled") %>% arrange(filled_avg_price) %>% mutate(cum.shares = cumsum(qty_remain))
+    o_ns_buy <- .o_o %>% dplyr::filter(side == "buy" & status == "filled") %>% dplyr::arrange(filled_avg_price) %>% dplyr::mutate(cum.shares = cumsum(qty_remain))
   }
   # Pre allocate space for results of GL calculation and linking of sells to buys
   sell_update <- list()
   # For each of the sold orders add the ids
   for (i in seq_along(filled_tsl$id)) {
-    o_ns_buy %<>% filter((!is.character(SID) | qty_remain > 0))
+    o_ns_buy %<>% dplyr::filter((!is.character(SID) | qty_remain > 0))
     # Create an index vector for the previous buy orders sold when this order filled
       soldbuy_orders_ind <- seq(1, which(o_ns_buy$cum.shares >= filled_tsl$filled_qty[i])[1])
     #fill the sid for the buy orders
@@ -145,7 +145,7 @@ if (any(o_p.lgl)) {
     }
     # fill the sid for the sale orders
     filled_tsl[i, "SID"] <- filled_tsl$id[i]
-    b <- o_ns_buy %>% filter(stringr::str_detect(SID,stringr::coll(filled_tsl$id[i]))) # Filter for just the sold buy orders and remove the cum.shares
+    b <- o_ns_buy %>% dplyr::filter(stringr::str_detect(SID,stringr::coll(filled_tsl$id[i]))) # Filter for just the sold buy orders and remove the cum.shares
     # Fill other values
     # TODO 2019-08-18 0706 TSL should not be simply filled, must be matched between sell & buy orders.
     filled_tsl$TSL <- unique(b$TSL)
@@ -170,9 +170,9 @@ if (any(o_p.lgl)) {
     # Update CB
     filled_tsl[i, "CB"] <- mean(b$CB)
     b[, c("GL", "qty_remain")] <- b_df
-    sell_update[[1]] <- rbind.data.frame(filled_tsl, b %>% select(-cum.shares))
+    sell_update[[1]] <- rbind.data.frame(filled_tsl, b %>% dplyr::select(-cum.shares))
     } # for i loop over id
-  sell_updates <- bind_rows(sell_update)
+  sell_updates <- dplyr::bind_rows(sell_update)
 } # Close if statement
   
   if (HDA::go("sell_updates")) out <- sell_updates else out <- NULL
@@ -203,7 +203,7 @@ Positions_new <- params$getPositions_new(names(open_shares), .retrieveAll = T)
 Orders <- googlesheets::gs_read(params$gs, ws = "Orders", col_types = params$Orders_cols)
 
 # for Debugging
-list(.o_p = open_positions[names(open_shares)], .orders = split(Orders %>% filter(Platform == "A"), Orders %>% filter(Platform == "A") %>% .[["symbol"]])[names(open_shares)], .o_s = open_shares, .p_n = Positions_new) %>% purrr::map(1) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
+list(.o_p = open_positions[names(open_shares)], .orders = split(Orders %>% dplyr::filter(Platform == "A"), Orders %>% dplyr::filter(Platform == "A") %>% .[["symbol"]])[names(open_shares)], .o_s = open_shares, .p_n = Positions_new) %>% purrr::map(1) %>% append(list(TSLvars = params$TSLvars)) %>% list2env(envir = .GlobalEnv)
 
 
 
@@ -231,7 +231,7 @@ purrr::pwalk(list(.o_p = open_positions[names(open_shares)], .orders = split(Ord
   
   # Retrieve the filled buy orders themselves (such that the data can be filtered according to when the purchase was made)
   tsl_orders <- .orders %>% dplyr::filter(side == "buy" & status == "filled" & qty_remain > 0) %>% dplyr::mutate(cum.shares = cumsum(qty_remain))
-  tsl_orders$peaks <- purrr::map_dbl(tsl_orders$filled_at, .new_data = new_data, function(.x, .new_data) {
+  tsl_orders$peaks <- purrr::map_dbl(tsl_orders$filled_at, .new_data = .p_n, function(.x, .new_data) {
     .new_data %>% dplyr::filter(time >= .x) %>% .[["high"]] %>% max
   })
   # group by tsl type, live, and the peaks
@@ -249,10 +249,9 @@ purrr::pwalk(list(.o_p = open_positions[names(open_shares)], .orders = split(Ord
     tsl_sum %<>% dplyr::group_by(TSL, live) %>% dplyr::summarise(qty = sum(qty)) %>% dplyr::ungroup()
     # Subtract the stop loss amounts from the peaks
     tsl_sum %<>% dplyr::mutate(SL = purrr::pmap_dbl(list(TSL, live, qty, peaks, filled_at), .dat = .p_n, TSLvars = TSLvars, function(TSL, live, qty, peaks, filled_at, .dat, TSLvars) {
-      tsl_amt <- attr(TSLvars, "tsl_amt")
       .args <- TSLvars[TSL]
       .args[[1]]$dtref <- filled_at
-      amt <- tsl_amt(.data = .dat, .args = .args[1])
+      amt <- qf::tsl_amt(.data = .dat, .args = .args[1])
       out <- peaks - amt
       return(out)
     })
