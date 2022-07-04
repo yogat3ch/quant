@@ -17,13 +17,13 @@ source("~/R/Quant/JobsScripts/parameters.R")
 cl <- parallel::makeCluster(6)
 future::plan(future::cluster, workers = cl)
 preds <- furrr::future_imap(dat_oot, .options = furrr::future_options(packages = "rlang"), .f = ~{
-  qf:iMessage(paste0(lubridate::now(),": Begin ",.y))
+  qf::iMessage(paste0(lubridate::now(),": Begin ",.y))
   tictoc::tic()
   .d <- .x
   .sym <- attr(.d$train, "Sym") %||% .y
   .btsl <- attr(.d$train, "tsl")
-  frm <- formula(glue::glue("{.btsl$tsl}_rv ~ ."))
-  .ti <- qf::time_int(.d$train)
+  frm <- stats::formula(glue::glue("{.btsl$tsl}_rv ~ ."))
+  .ti <- AlpacaforR::time_interval(.d$train)
   
   .tune <- attr(.d$train, "tune")
   .tune <- purrr::map(.tune, ~{
@@ -63,7 +63,7 @@ preds <- furrr::future_imap(dat_oot, .options = furrr::future_options(packages =
   # Sat Aug 15 15:17:14 2020
   out <-  purrr::map_depth(.mods, 2, ~{
     .out <- list()
-    .pred <- predict(.x, new_data = .d$test)
+    .pred <- stats::predict(.x, new_data = .d$test)
     .pred <- .pred[[1]] # Select the first col in the tibble (the predictions)
     .dat <- tibble::tibble(truth = .d_b[[frm[[2]]]], estimate = .pred)
     # rmse
