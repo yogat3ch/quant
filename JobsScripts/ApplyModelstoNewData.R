@@ -35,29 +35,29 @@ dat <- purrr::pmap(list(.dat = dat, .sym = names(dat), .b_tsl = best_tsl[names(d
   .preds <- purrr::pmap(list(.tsl = unique(.b_tsl$tsl_types$tsl)), .pf = sys.frame(sys.nframe()), function(.tsl, .pf) {
     message(paste0(ls(envir = .pf, all.names = T), collapse = ", "))
     # Preprocess data
-    .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ."))
+    .frm <- stats::formula(paste(paste0("`",.tsl,"`"), "~ ."))
     .td_nm <- params$getTimeIndex(.pf$.dat)
     message(paste0("Is ",.tsl, " in the object? ", .tsl %in% names(.pf$ob)))
     # ----------------------- Fri Jul 26 14:19:16 2019 ------------------------#
     # PreProcessing Data
     # 1. Make model frame
-    .out <- model.frame(.frm, data = .pf$.dat, na.action = "na.pass")
+    .out <- stats::model.frame(.frm, data = .pf$.dat, na.action = "na.pass")
     # 2. remove any columns that may be matrices
     .out <- dplyr::mutate_if(.out, .predicate = is.matrix, ~ as.vector(.))
     # 3. Create dummyVars from factors
     library(caret)
-    .out <- caret::dummyVars(.frm, data = .out) %>% predict(., newdata = .out)
+    .out <- caret::dummyVars(.frm, data = .out) %>% stats::predict(., newdata = .out)
     HDA::unloadPkgs("caret")
-    .frm <- formula(paste(paste0("`",.tsl,"`"), "~ ", paste(.pf$ob[[.tsl]][[1]][["coefnames"]], collapse = " + ")))
+    .frm <- stats::formula(paste(paste0("`",.tsl,"`"), "~ ", paste(.pf$ob[[.tsl]][[1]][["coefnames"]], collapse = " + ")))
     .out <- cbind.data.frame(.pf$.dat[, .tsl], .out)
-    .out <- model.frame(.frm, data = as.data.frame(.out))
+    .out <- stats::model.frame(.frm, data = as.data.frame(.out))
     if (xts::is.xts(.pf$.dat)) {
       # Add Prediction column
-      .out <- data.frame(v = rowMeans(predict(.pf$ob[[.tsl]], newdata = .out)))
+      .out <- data.frame(v = rowMeans(stats::predict(.pf$ob[[.tsl]], newdata = .out)))
       colnames(.out)[1] <- paste0(.tsl, "_pred")
     } else {
       # Add Prediction column
-      .out <- data.frame(v = rowMeans(predict(.pf$ob[[.tsl]], newdata = .out)))
+      .out <- data.frame(v = rowMeans(stats::predict(.pf$ob[[.tsl]], newdata = .out)))
       colnames(.out)[1] <- paste0(.tsl, "_pred")
       
     }
