@@ -4,7 +4,7 @@ addPV <- function(.x) {
   lines <- readr::read_lines(.x)
   lines <- c(lines, "")
   .empty <- which(purrr::map_dbl(lines, nchar) == 0)
-  .last <- tail(.empty, 1)
+  .last <- utils::tail(.empty, 1)
   names(.empty) <- 1:length(.empty)
   .al <- 0
   .s <- split(.empty,rep(1:round(length(.empty) / 2 + 1), each = 2, length.out = length(.empty)))
